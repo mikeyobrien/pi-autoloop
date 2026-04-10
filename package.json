@@ -1,0 +1,47 @@
+{
+  "name": "pi-autoloop",
+  "version": "0.1.0",
+  "description": "Pi extension for running autoloop autonomous LLM loops",
+  "type": "module",
+  "license": "MIT",
+  "author": "mikeyobrien",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mikeyobrien/pi-autoloop"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "autoloop",
+    "llm",
+    "autonomous"
+  ],
+  "files": [
+    "*.ts",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*",
+    "@types/node": "*",
+    "typescript": "^6.0.0"
+  }
+}
