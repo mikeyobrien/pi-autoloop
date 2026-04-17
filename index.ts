@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { AutoloopManager } from "./manager.ts";
 import { renderStatusWidget, setupMessageRenderer } from "./render.ts";
+import { setupLoopDock, DOCK_WIDGET_ID } from "./dock.ts";
 import { createAutoloopTool } from "./tool.ts";
 import { findRun, readRegistry } from "./registry.ts";
 import { allRunCompletions, runningRunCompletions, inspectCompletions } from "./completions.ts";
@@ -9,6 +10,7 @@ import { MESSAGE_TYPE_AUTOLOOP_UPDATE, type AutoloopUpdateDetails, formatElapsed
 export default function (pi: ExtensionAPI) {
   const manager = new AutoloopManager();
   let unsubscribe: (() => void) | null = null;
+  let cleanupDock: (() => void) | null = null;
   let latestContext: ExtensionContext | null = null;
 
   setupMessageRenderer(pi);
@@ -27,7 +29,7 @@ export default function (pi: ExtensionAPI) {
     latestContext.ui.setWidget(
       "autoloop",
       lines.length > 0 ? lines : undefined,
-      { placement: "aboveEditor" },
+      { placement: "belowEditor" },
     );
   }
 
@@ -77,11 +79,20 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     latestContext = ctx;
     updateWidget();
+    // Set up the iteration dock (component factory, updates in place)
+    cleanupDock?.();
+    cleanupDock = setupLoopDock(
+      manager,
+      (key, content, options) => ctx.ui.setWidget(key, content as any, options as any),
+      () => latestContext?.cwd ?? process.cwd(),
+    );
   });
 
   pi.on("session_shutdown", async () => {
     unsubscribe?.();
     unsubscribe = null;
+    cleanupDock?.();
+    cleanupDock = null;
     manager.cleanup();
   });
 
@@ -114,7 +125,10 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("loop:list", {
     description: "List all autoloop runs",
     handler: async (_args, ctx) => {
-      const runs = readRegistry(ctx.cwd);
+      const allRecords = readRegistry(ctx.cwd);
+      const latest = new Map<string, typeof allRecords[0]>();
+      for (const r of allRecords) latest.set(r.run_id, r);
+      const runs = [...latest.values()];
       if (!runs.length) {
         ctx.ui.notify("No autoloop runs found", "info");
         return;

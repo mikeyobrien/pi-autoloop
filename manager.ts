@@ -90,13 +90,28 @@ export class AutoloopManager {
     this.runs.set(tempKey, state);
     this.emit({ type: "runs_changed" });
 
-    // Poll to discover run_id from registry
+    // Poll to discover run_id from progress lines or registry
     const discoveryPoll = setInterval(() => {
+      // Try progress lines first
       const progress = this.parseProgressLines(stdoutLogFile);
       const firstWithId = progress.find((p) => p.run_id);
       if (firstWithId) {
         clearInterval(discoveryPoll);
         state.runId = firstWithId.run_id;
+        this.runs.delete(tempKey);
+        this.runs.set(state.runId, state);
+        this.emit({ type: "run_started", runId: state.runId, preset });
+        this.emit({ type: "runs_changed" });
+        return;
+      }
+      // Fallback: check registry for a new running record matching our preset
+      const records = readRegistry(state.cwd);
+      const candidate = records
+        .filter((r) => r.status === "running" && r.preset === preset && r.pid === state.process.pid)
+        .pop();
+      if (candidate) {
+        clearInterval(discoveryPoll);
+        state.runId = candidate.run_id;
         this.runs.delete(tempKey);
         this.runs.set(state.runId, state);
         this.emit({ type: "run_started", runId: state.runId, preset });

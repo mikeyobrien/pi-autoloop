@@ -9,7 +9,7 @@ import { Type } from "@sinclair/typebox";
 import type { AutoloopManager } from "./manager.ts";
 import { findRun, readRegistry } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
-import type { AutoloopDetails } from "./types.ts";
+import type { AutoloopDetails, RunRecord } from "./types.ts";
 
 const AutoloopParams = Type.Object({
   action: StringEnum(
@@ -120,7 +120,11 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
           );
         }
         case "list": {
-          const runs = readRegistry(ctx.cwd);
+          const allRecords = readRegistry(ctx.cwd);
+          // Deduplicate: keep only the latest record per run_id
+          const latest = new Map<string, RunRecord>();
+          for (const r of allRecords) latest.set(r.run_id, r);
+          const runs = [...latest.values()];
           const summary = runs.length
             ? runs
                 .map(

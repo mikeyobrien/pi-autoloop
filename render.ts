@@ -326,35 +326,17 @@ export function renderStatusWidget(
   theme: Theme,
   maxWidth?: number,
 ): string[] {
-  // Build entries: active runs first, then recent completed/finished from registry
+  if (activeRuns.length === 0) return [];
+
+  // Build entries from active runs only
   const entries: WidgetEntry[] = [];
-  const seenIds = new Set<string>();
 
   for (const run of activeRuns) {
     const id = run.runId || "pending";
-    seenIds.add(id);
     entries.push({
       name: id,
       status: "running",
       elapsed: formatElapsed(Date.now() - run.startedAt),
-    });
-  }
-
-  // Add recent non-running records from registry (most recent first)
-  const finished = recentRecords
-    .filter((r) => r.status !== "running" && !seenIds.has(r.run_id))
-    .reverse()
-    .slice(0, 5);
-  for (const r of finished) {
-    seenIds.add(r.run_id);
-    const created = r.created_at ? new Date(r.created_at).getTime() : Date.now();
-    const updated = r.updated_at ? new Date(r.updated_at).getTime() : Date.now();
-    entries.push({
-      name: r.run_id,
-      status: r.status,
-      iter: r.iteration,
-      maxIter: r.max_iterations,
-      elapsed: formatElapsed(updated - created),
     });
   }
 
