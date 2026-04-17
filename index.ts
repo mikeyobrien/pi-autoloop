@@ -206,7 +206,7 @@ export default function (pi: ExtensionAPI) {
       }
       const res = await pi.exec(
         resolveAutoloopBin(),
-        ["inspect", artifact, "--format", "md"],
+        ["inspect", artifact, "--run-id", runId, "--format", "md"],
         { timeout: 10_000 },
       );
       const output = res.stdout?.trim() || res.stderr?.trim() || "No output";

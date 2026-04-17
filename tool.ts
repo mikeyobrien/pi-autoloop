@@ -54,9 +54,9 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
     description: `Run autonomous LLM loops. Actions:
 - run: Start an autoloop (requires preset, prompt)
 - list: Show active and recent runs
-- status: Get run progress (requires runId)
+- status: Get run progress — returns journal/state_dir/work_dir paths you can read with your own file tools (requires runId)
 - stop: Stop a running autoloop (requires runId)
-- inspect: Read run artifacts (requires runId, artifact)
+- inspect: Read structured run artifacts (requires runId, artifact). For ad-hoc files (progress.md, fix-log.md, scratchpads), get state_dir from status and read files directly with your read/bash tools.
 - presets: List available presets`,
     promptSnippet: "Run autonomous LLM loops for complex multi-step tasks",
     parameters: AutoloopParams,
@@ -143,7 +143,12 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
           const progress = manager.getProgress(params.runId);
           if (!record)
             return result("status", false, `Run not found: ${params.runId}`);
-          const msg = `${record.run_id} [${record.status}] iter=${record.iteration}/${record.max_iterations} event=${record.latest_event}`;
+          const msg = [
+            `${record.run_id} [${record.status}] iter=${record.iteration + 1}/${record.max_iterations} event=${record.latest_event}`,
+            `journal: ${record.journal_file}`,
+            `state_dir: ${record.state_dir}`,
+            `work_dir: ${record.work_dir}`,
+          ].join("\n");
           return result("status", true, msg, {
             record,
             progress,
@@ -172,7 +177,7 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
             );
           const res = await pi.exec(
             resolveAutoloopBin(),
-            ["inspect", params.artifact, "--format", "md"],
+            ["inspect", params.artifact, "--run-id", params.runId, "--format", "md"],
             { timeout: 10_000 },
           );
           const output =

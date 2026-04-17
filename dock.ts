@@ -1,6 +1,7 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Component } from "@mariozechner/pi-tui";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { readFileSync } from "node:fs";
 import type { AutoloopManager } from "./manager.ts";
 import { readRegistry, findRun } from "./registry.ts";
 import { formatElapsed } from "./types.ts";
@@ -22,6 +23,30 @@ const MEANINGFUL_TOPICS = new Set([
   "build.blocked",
   "wave.timeout", "wave.failed",
 ]);
+
+/**
+ * Read the latest meaningful event payload from a journal file.
+ * Returns a single-line summary (newlines collapsed), or "" if none found.
+ */
+function readLatestPayload(journalFile: string): string {
+  try {
+    const content = readFileSync(journalFile, "utf-8");
+    const lines = content.split("\n").filter((l) => l.trim());
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const entry = JSON.parse(lines[i]) as { topic?: string; payload?: string };
+        if (entry.topic && MEANINGFUL_TOPICS.has(entry.topic) && entry.payload) {
+          return entry.payload.replace(/\s+/g, " ").trim();
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+  } catch {
+    // file unreadable
+  }
+  return "";
+}
 
 function renderPanelRule(width: number, theme: Theme): string {
   return theme.fg("dim", "─".repeat(Math.max(0, width)));
@@ -97,23 +122,28 @@ export class LoopDockComponent implements Component {
         "";
       const role = last?.role ?? "";
 
-      // Title line: 🔁 runId (preset|backend) iter/max elapsed
+      // Single-line status: 🔁 runId (preset|backend) iter=N/M elapsed · role → event
       const backend = record?.backend ?? "";
       const label = backend ? `${run.preset}|${backend}` : run.preset;
-      const title =
+      const detailParts: string[] = [];
+      if (role) detailParts.push(theme.fg("warning", role));
+      if (latestEvent) detailParts.push(dim(latestEvent));
+      const detail = detailParts.length > 0 ? dim(" · ") + detailParts.join(dim(" → ")) : "";
+      const line =
         "🔁 " +
         accent(id) +
         dim(` (${label})`) +
         dim(` iter=${iter + 1}/${maxIter}`) +
-        dim(` ${elapsed}`);
-      lines.push(padLine(title, width));
+        dim(` ${elapsed}`) +
+        detail;
+      lines.push(padLine(line, width));
 
-      // Detail line: role + latest event
-      const parts: string[] = [];
-      if (role) parts.push(theme.fg("warning", role));
-      if (latestEvent) parts.push(dim(latestEvent));
-      if (parts.length > 0) {
-        lines.push(padLine(parts.join(dim(" → ")), width));
+      // Second line: latest meaningful event payload (summary), truncated
+      if (record?.journal_file) {
+        const payload = readLatestPayload(record.journal_file);
+        if (payload) {
+          lines.push(padLine(dim(payload), width));
+        }
       }
     }
 
