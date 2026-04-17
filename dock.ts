@@ -7,6 +7,22 @@ import { formatElapsed } from "./types.ts";
 
 const DOCK_WIDGET_ID = "autoloop-dock";
 
+/**
+ * Event topics that carry real progress signal (shown in the dock).
+ * Source: AgentSpacesAgentInterfaceFrontend loops-dashboard-panel.
+ * Structural events (iteration.start, backend.start, etc.) are hidden.
+ */
+const MEANINGFUL_TOPICS = new Set([
+  "loop.start", "loop.stop", "loop.complete",
+  "brief.ready", "tasks.ready", "research.ready", "design.ready", "spec.ready",
+  "review.passed", "review.rejected", "review.ready", "review.start",
+  "fix.ready", "fix.verified", "rootcause.ready", "hypothesis.ready", "cause.found",
+  "task.complete", "operator.guidance",
+  "spec.revise", "qa.planned", "qa.executed", "qa.continue", "surfaces.identified",
+  "build.blocked",
+  "wave.timeout", "wave.failed",
+]);
+
 function renderPanelRule(width: number, theme: Theme): string {
   return theme.fg("dim", "─".repeat(Math.max(0, width)));
 }
@@ -61,20 +77,34 @@ export class LoopDockComponent implements Component {
       const id = run.runId || "discovering...";
       const elapsed = formatElapsed(Date.now() - run.startedAt);
       const progress = this.manager.getProgress(run.runId);
-      const last = progress.at(-1);
+      // Find the latest meaningful event (skip structural like iteration.start)
+      const meaningful = [...progress]
+        .reverse()
+        .find((p) => MEANINGFUL_TOPICS.has(p.emitted) || MEANINGFUL_TOPICS.has(p.recent));
+      const last = meaningful ?? progress.at(-1);
 
       // Find registry record for iteration info
       const record = run.runId ? findRun(this.cwd, run.runId) : undefined;
       const iter = record?.iteration ?? last?.iter ?? 0;
       const maxIter = record?.max_iterations ?? "?";
-      const latestEvent = record?.latest_event ?? last?.recent ?? "";
+      const recordEventMeaningful =
+        record?.latest_event && MEANINGFUL_TOPICS.has(record.latest_event)
+          ? record.latest_event
+          : "";
+      const latestEvent =
+        recordEventMeaningful ||
+        (last && (MEANINGFUL_TOPICS.has(last.emitted) ? last.emitted : MEANINGFUL_TOPICS.has(last.recent) ? last.recent : "")) ||
+        "";
       const role = last?.role ?? "";
 
-      // Title line: runId (preset) iter/max elapsed
+      // Title line: 🔁 runId (preset|backend) iter/max elapsed
+      const backend = record?.backend ?? "";
+      const label = backend ? `${run.preset}|${backend}` : run.preset;
       const title =
+        "🔁 " +
         accent(id) +
-        dim(` (${run.preset})`) +
-        dim(` iter=${iter}/${maxIter}`) +
+        dim(` (${label})`) +
+        dim(` iter=${iter + 1}/${maxIter}`) +
         dim(` ${elapsed}`);
       lines.push(padLine(title, width));
 

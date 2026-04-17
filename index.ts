@@ -1,10 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { execFileSync } from "node:child_process";
 import { AutoloopManager } from "./manager.ts";
-import { renderStatusWidget, setupMessageRenderer } from "./render.ts";
+import { setupMessageRenderer } from "./render.ts";
 import { setupLoopDock, DOCK_WIDGET_ID } from "./dock.ts";
 import { createAutoloopTool } from "./tool.ts";
 import { findRun, readRegistry } from "./registry.ts";
 import { allRunCompletions, runningRunCompletions, inspectCompletions } from "./completions.ts";
+import { resolveAutoloopBin } from "./autoloop-bin.ts";
 import { MESSAGE_TYPE_AUTOLOOP_UPDATE, type AutoloopUpdateDetails, formatElapsed } from "./types.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -14,24 +16,6 @@ export default function (pi: ExtensionAPI) {
   let latestContext: ExtensionContext | null = null;
 
   setupMessageRenderer(pi);
-
-  function updateWidget() {
-    if (!latestContext?.hasUI) return;
-    const activeRuns = manager.getRuns();
-    const recentRecords = readRegistry(latestContext.cwd);
-    const maxWidth = process.stdout.columns || 120;
-    const lines = renderStatusWidget(
-      activeRuns,
-      recentRecords,
-      latestContext.ui.theme,
-      maxWidth,
-    );
-    latestContext.ui.setWidget(
-      "autoloop",
-      lines.length > 0 ? lines : undefined,
-      { placement: "belowEditor" },
-    );
-  }
 
   unsubscribe = manager.onEvent((event) => {
     if (event.type === "run_ended") {
@@ -64,21 +48,30 @@ export default function (pi: ExtensionAPI) {
       pi.sendMessage(
         {
           customType: MESSAGE_TYPE_AUTOLOOP_UPDATE,
-          content: `Autoloop run \`${runId}\` (${preset}) finished: **${status}** at iteration ${iter}/${max}`,
+          content: `Autoloop run \`${runId}\` (${preset}) finished: **${status}** at iteration ${iter + 1}/${max}`,
           display: true,
           details,
         },
         { triggerTurn: true },
       );
     }
-    updateWidget();
   });
 
   pi.registerTool(createAutoloopTool(pi, manager));
 
   pi.on("session_start", async (_event, ctx) => {
     latestContext = ctx;
-    updateWidget();
+
+    // Verify the autoloop binary is runnable
+    try {
+      execFileSync(resolveAutoloopBin(), ["--version"], { stdio: "ignore", timeout: 5000 });
+    } catch {
+      ctx.ui.notify(
+        "autoloop CLI unavailable. Try: npm install -g @mobrienv/autoloop (or set PI_AUTOLOOP_BIN)",
+        "warning",
+      );
+    }
+
     // Set up the iteration dock (component factory, updates in place)
     cleanupDock?.();
     cleanupDock = setupLoopDock(
@@ -118,7 +111,6 @@ export default function (pi: ExtensionAPI) {
         `Started autoloop: ${preset} (run ID discovering...)`,
         "info",
       );
-      updateWidget();
     },
   });
 
@@ -135,7 +127,7 @@ export default function (pi: ExtensionAPI) {
       }
       const lines = runs.map(
         (r) =>
-          `${r.run_id} [${r.status}] ${r.preset} iter=${r.iteration}/${r.max_iterations}`,
+          `${r.run_id} [${r.status}] ${r.preset}|${r.backend} iter=${r.iteration + 1}/${r.max_iterations}`,
       );
       ctx.ui.notify(lines.join("\n"), "info");
     },
@@ -163,7 +155,8 @@ export default function (pi: ExtensionAPI) {
         `Run: ${record.run_id}`,
         `Status: ${record.status}`,
         `Preset: ${record.preset}`,
-        `Iteration: ${record.iteration}/${record.max_iterations}`,
+        `Backend: ${record.backend}`,
+        `Iteration: ${record.iteration + 1}/${record.max_iterations}`,
         `Event: ${record.latest_event}`,
         last ? `Role: ${last.role} | Outcome: ${last.outcome}` : "",
       ]
@@ -188,7 +181,6 @@ export default function (pi: ExtensionAPI) {
         stopped ? `Stopped: ${runId}` : `Failed to stop: ${runId}`,
         stopped ? "info" : "error",
       );
-      updateWidget();
     },
   });
 
@@ -213,7 +205,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const res = await pi.exec(
-        "autoloop",
+        resolveAutoloopBin(),
         ["inspect", artifact, "--format", "md"],
         { timeout: 10_000 },
       );
@@ -225,7 +217,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("loop:presets", {
     description: "List available autoloop presets",
     handler: async (_args, ctx) => {
-      const res = await pi.exec("autoloop", ["list"], { timeout: 10_000 });
+      const res = await pi.exec(resolveAutoloopBin(), ["list"], { timeout: 10_000 });
       const output = res.stdout?.trim() || "No presets found";
       ctx.ui.notify(output, res.code === 0 ? "info" : "error");
     },

@@ -211,7 +211,7 @@ function renderListResult(d: AutoloopDetails, options: ToolRenderResultOptions, 
       default: color = "dim";
     }
     lines.push(
-      `  ${theme.fg(color, r.run_id)} ${theme.fg("dim", `[${r.status}]`)} ${r.preset} iter=${r.iteration}/${r.max_iterations}`,
+      `  ${theme.fg(color, r.run_id)} ${theme.fg("dim", `[${r.status}]`)} ${r.preset}${theme.fg("dim", "|")}${r.backend} iter=${r.iteration + 1}/${r.max_iterations}`,
     );
   }
 
@@ -260,13 +260,14 @@ function renderStatusResult(d: AutoloopDetails, options: ToolRenderResultOptions
     default: statusColor = "dim";
   }
 
-  const statusLine = `${theme.fg(statusColor, r.run_id)} ${theme.fg(statusColor, `[${r.status}]`)} iter=${r.iteration}/${r.max_iterations}`;
+  const statusLine = `${theme.fg(statusColor, r.run_id)} ${theme.fg(statusColor, `[${r.status}]`)} iter=${r.iteration + 1}/${r.max_iterations}`;
 
   const progress = d.progress;
   const last = progress?.at(-1);
 
   const detailLines = [
     `  Preset: ${r.preset}`,
+    `  Backend: ${r.backend}`,
     `  Event: ${r.latest_event}`,
     last ? `  Role: ${last.role} | Outcome: ${last.outcome}` : "",
   ].filter(Boolean);
@@ -451,7 +452,7 @@ export function setupMessageRenderer(pi: ExtensionAPI) {
         theme.fg("muted", ` (${details.runId})`) +
         " " +
         theme.fg(color, details.status) +
-        theme.fg("muted", ` ${details.iteration}/${details.maxIterations} ${details.elapsed}`);
+        theme.fg("muted", ` ${details.iteration + 1}/${details.maxIterations} ${details.elapsed}`);
 
       return new Text(text, 0, 0);
     },

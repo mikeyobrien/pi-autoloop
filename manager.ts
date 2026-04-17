@@ -4,6 +4,7 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readRegistry } from "./registry.ts";
+import { resolveAutoloopBin } from "./autoloop-bin.ts";
 import type {
   AutoloopEvent,
   AutoloopRunState,
@@ -45,7 +46,7 @@ export class AutoloopManager {
     const stdoutLogFile = join(this.logDir, `run-${Date.now()}.log`);
     appendFileSync(stdoutLogFile, "");
 
-    const child = spawn("autoloop", args, {
+    const child = spawn(resolveAutoloopBin(), args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
     });

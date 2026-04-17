@@ -36,6 +36,9 @@
     "@mariozechner/pi-tui": "*",
     "@sinclair/typebox": "*"
   },
+  "dependencies": {
+    "@mobrienv/autoloop": "^0.4.0"
+  },
   "devDependencies": {
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",

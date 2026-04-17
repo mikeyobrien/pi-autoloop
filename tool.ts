@@ -9,6 +9,7 @@ import { Type } from "@sinclair/typebox";
 import type { AutoloopManager } from "./manager.ts";
 import { findRun, readRegistry } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
+import { resolveAutoloopBin } from "./autoloop-bin.ts";
 import type { AutoloopDetails, RunRecord } from "./types.ts";
 
 const AutoloopParams = Type.Object({
@@ -129,7 +130,7 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
             ? runs
                 .map(
                   (r) =>
-                    `${r.run_id} [${r.status}] ${r.preset} iter=${r.iteration}/${r.max_iterations}`,
+                    `${r.run_id} [${r.status}] ${r.preset}|${r.backend} iter=${r.iteration + 1}/${r.max_iterations}`,
                 )
                 .join("\n")
             : "No runs found";
@@ -170,7 +171,7 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
               "Missing required params: runId and artifact",
             );
           const res = await pi.exec(
-            "autoloop",
+            resolveAutoloopBin(),
             ["inspect", params.artifact, "--format", "md"],
             { timeout: 10_000 },
           );
@@ -182,7 +183,7 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
           });
         }
         case "presets": {
-          const res = await pi.exec("autoloop", ["list"], { timeout: 10_000 });
+          const res = await pi.exec(resolveAutoloopBin(), ["list"], { timeout: 10_000 });
           const output = res.stdout?.trim() || "No presets found";
           return result("presets", res.code === 0, output, { output });
         }
