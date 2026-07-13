@@ -1,29 +1,29 @@
 import type { AutocompleteItem } from "@mariozechner/pi-tui";
-import type { AutoloopManager } from "./manager.ts";
+import type { Driver } from "./driver.ts";
 import { readRegistry } from "./registry.ts";
 import type { RunRecord } from "./types.ts";
 
 function deduplicatedRuns(
-  manager: AutoloopManager,
+  driver: Driver,
   getCwd: () => string,
 ): RunRecord[] {
-  const active = manager.getRuns();
+  const active = driver.getRuns();
   const registry = readRegistry(getCwd());
 
-  // Build a map keyed by run_id — active runs take priority
+  // Build a map keyed by run_id — active (in-process) runs take priority.
   const byId = new Map<string, RunRecord>();
 
-  // Registry records first (last entry per run_id wins)
+  // Registry records first (last entry per run_id wins).
   for (const r of registry) {
     byId.set(r.run_id, r);
   }
 
-  // Active runs override registry
+  // Active native loops override registry.
   for (const a of active) {
     if (!a.runId) continue;
     byId.set(a.runId, {
       run_id: a.runId,
-      status: "running",
+      status: a.phase === "idle" ? "completed" : "running",
       preset: a.preset,
     } as RunRecord);
   }
@@ -46,21 +46,21 @@ function matchPrefix(
 }
 
 export function allRunCompletions(
-  manager: AutoloopManager,
+  driver: Driver,
   getCwd: () => string,
 ): (prefix: string) => AutocompleteItem[] {
   return (prefix: string) => {
-    const runs = deduplicatedRuns(manager, getCwd);
+    const runs = deduplicatedRuns(driver, getCwd);
     return matchPrefix(runs, prefix);
   };
 }
 
 export function runningRunCompletions(
-  manager: AutoloopManager,
+  driver: Driver,
   getCwd: () => string,
 ): (prefix: string) => AutocompleteItem[] {
   return (prefix: string) => {
-    const runs = deduplicatedRuns(manager, getCwd);
+    const runs = deduplicatedRuns(driver, getCwd);
     return matchPrefix(
       runs.filter((r) => r.status === "running"),
       prefix,
@@ -76,14 +76,14 @@ const ARTIFACTS: AutocompleteItem[] = [
 ];
 
 export function inspectCompletions(
-  manager: AutoloopManager,
+  driver: Driver,
   getCwd: () => string,
 ): (prefix: string) => AutocompleteItem[] {
   return (prefix: string) => {
     const spaceIdx = prefix.indexOf(" ");
     if (spaceIdx === -1) {
       // Phase 1: complete run IDs
-      const runs = deduplicatedRuns(manager, getCwd);
+      const runs = deduplicatedRuns(driver, getCwd);
       return matchPrefix(runs, prefix);
     }
     // Phase 2: complete artifact names after the run ID

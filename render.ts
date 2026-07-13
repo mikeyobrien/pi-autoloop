@@ -9,15 +9,13 @@ import type {
   ToolRenderResultOptions,
 } from "@mariozechner/pi-coding-agent";
 import type { Component } from "@mariozechner/pi-tui";
-import { Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { Text } from "@mariozechner/pi-tui";
 import {
   MESSAGE_TYPE_AUTOLOOP_UPDATE,
   type AutoloopDetails,
-  type AutoloopRunState,
   type AutoloopUpdateDetails,
-  type RunRecord,
-  formatElapsed,
 } from "./types.ts";
+import { formatIterationProgress } from "./native-state.ts";
 
 // ---------------------------------------------------------------------------
 // Optional dependency: @aliou/pi-utils-ui
@@ -211,7 +209,7 @@ function renderListResult(d: AutoloopDetails, options: ToolRenderResultOptions, 
       default: color = "dim";
     }
     lines.push(
-      `  ${theme.fg(color, r.run_id)} ${theme.fg("dim", `[${r.status}]`)} ${r.preset}${theme.fg("dim", "|")}${r.backend} iter=${r.iteration + 1}/${r.max_iterations}`,
+      `  ${theme.fg(color, r.run_id)} ${theme.fg("dim", `[${r.status}]`)} ${r.preset}${theme.fg("dim", "|")}${r.backend} iter=${formatIterationProgress(r.iteration, r.max_iterations)}`,
     );
   }
 
@@ -260,16 +258,12 @@ function renderStatusResult(d: AutoloopDetails, options: ToolRenderResultOptions
     default: statusColor = "dim";
   }
 
-  const statusLine = `${theme.fg(statusColor, r.run_id)} ${theme.fg(statusColor, `[${r.status}]`)} iter=${r.iteration + 1}/${r.max_iterations}`;
-
-  const progress = d.progress;
-  const last = progress?.at(-1);
+  const statusLine = `${theme.fg(statusColor, r.run_id)} ${theme.fg(statusColor, `[${r.status}]`)} iter=${formatIterationProgress(r.iteration, r.max_iterations)}`;
 
   const detailLines = [
     `  Preset: ${r.preset}`,
     `  Backend: ${r.backend}`,
-    `  Event: ${r.latest_event}`,
-    last ? `  Role: ${last.role} | Outcome: ${last.outcome}` : "",
+    r.latest_event ? `  Event: ${r.latest_event}` : "",
   ].filter(Boolean);
 
   if (!ToolBody) {
@@ -282,116 +276,6 @@ function renderStatusResult(d: AutoloopDetails, options: ToolRenderResultOptions
   ];
 
   return new ToolBody({ fields }, options, theme);
-}
-
-function truncName(name: string, max = 20): string {
-  return name.length > max ? `${name.slice(0, max - 3)}...` : name;
-}
-
-interface WidgetEntry {
-  name: string;
-  status: string;
-  iter?: number;
-  maxIter?: number;
-  elapsed: string;
-}
-
-function formatEntry(entry: WidgetEntry, theme: Theme): string {
-  const name = truncName(entry.name);
-  let color: Parameters<Theme["fg"]>[0];
-  switch (entry.status) {
-    case "running":
-      color = "accent";
-      break;
-    case "completed":
-      color = "success";
-      break;
-    case "failed":
-    case "timed_out":
-    case "stopped":
-      color = "error";
-      break;
-    default:
-      color = "dim";
-  }
-  const progress =
-    entry.iter != null && entry.maxIter != null
-      ? ` ${entry.iter}/${entry.maxIter}`
-      : "";
-  return `${theme.fg(color, name)} ${theme.fg("dim", entry.status + progress + " " + entry.elapsed)}`;
-}
-
-export function renderStatusWidget(
-  activeRuns: AutoloopRunState[],
-  recentRecords: RunRecord[],
-  theme: Theme,
-  maxWidth?: number,
-): string[] {
-  if (activeRuns.length === 0) return [];
-
-  // Build entries from active runs only
-  const entries: WidgetEntry[] = [];
-
-  for (const run of activeRuns) {
-    const id = run.runId || "pending";
-    entries.push({
-      name: id,
-      status: "running",
-      elapsed: formatElapsed(Date.now() - run.startedAt),
-    });
-  }
-
-  if (entries.length === 0) return [];
-
-  const prefix = theme.fg("dim", "loops: ");
-  const prefixLen = visibleWidth(prefix);
-  const separator = theme.fg("dim", " | ");
-  const separatorLen = visibleWidth(separator);
-  const effectiveMax = maxWidth ?? 200;
-
-  const parts: string[] = [];
-  let currentLen = prefixLen;
-  let includedCount = 0;
-
-  for (const entry of entries) {
-    const formatted = formatEntry(entry, theme);
-    const formattedLen = visibleWidth(formatted);
-    const remaining = entries.length - includedCount - 1;
-    const needed =
-      includedCount > 0 ? separatorLen + formattedLen : formattedLen;
-
-    let reservedForSuffix = 0;
-    if (remaining > 0) {
-      const suffixText = `+${remaining} more`;
-      reservedForSuffix = separatorLen + visibleWidth(suffixText);
-    }
-
-    if (
-      currentLen + needed + reservedForSuffix > effectiveMax &&
-      includedCount > 0
-    ) {
-      const hiddenCount = entries.length - includedCount;
-      if (hiddenCount > 0) parts.push(theme.fg("dim", `+${hiddenCount} more`));
-      break;
-    }
-
-    parts.push(formatted);
-    currentLen += needed;
-    includedCount++;
-  }
-
-  if (includedCount === 0 && entries.length > 0) {
-    parts.push(formatEntry(entries[0], theme));
-  }
-
-  if (parts.length === 0) return [];
-
-  const line = prefix + parts.join(separator);
-  return [
-    visibleWidth(line) > effectiveMax
-      ? truncateToWidth(line, effectiveMax)
-      : line,
-  ];
 }
 
 interface AutoloopUpdateMessage {
@@ -452,7 +336,7 @@ export function setupMessageRenderer(pi: ExtensionAPI) {
         theme.fg("muted", ` (${details.runId})`) +
         " " +
         theme.fg(color, details.status) +
-        theme.fg("muted", ` ${details.iteration + 1}/${details.maxIterations} ${details.elapsed}`);
+        theme.fg("muted", ` ${formatIterationProgress(details.iteration, details.maxIterations)} ${details.elapsed}`);
 
       return new Text(text, 0, 0);
     },

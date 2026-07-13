@@ -16,9 +16,16 @@
     "llm",
     "autonomous"
   ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "smoke:native": "node scripts/native-tmux-smoke.mjs"
+  },
   "files": [
     "*.ts",
+    "scripts",
     "skills",
+    "test",
     "README.md",
     "LICENSE"
   ],
@@ -37,7 +44,9 @@
     "@sinclair/typebox": "*"
   },
   "dependencies": {
-    "@mobrienv/autoloop": "^0.4.0"
+    "@mobrienv/autoloop": "^0.8.0",
+    "@mobrienv/autoloop-core": "^0.8.0",
+    "@mobrienv/autoloop-harness": "^0.8.0"
   },
   "devDependencies": {
     "@mariozechner/pi-ai": "*",
