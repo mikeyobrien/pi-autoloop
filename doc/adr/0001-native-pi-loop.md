@@ -1,4 +1,4 @@
-# pi-autoloop → Native In-Pi Loop: Design & Plan
+# ADR 0001: Native In-Pi Loop
 
 > Status: **Gate 0 PASSED + v1 implementation and live smoke COMPLETE (2026-07-13).**
 > The native driver, `loop_*` tools, system-prompt split, re-pointed tool/command surface,

@@ -1,6 +1,6 @@
 # Gate 0 spike — pi `context`-event fresh-context proof (THROWAWAY)
 
-Proves the four Gate 0 claims from `NATIVE_LOOP_PLAN.md` §3 against the **installed**
+Proves the four Gate 0 claims from [`ADR 0001`](../doc/adr/0001-native-pi-loop.md) §3 against the **installed**
 pi (`@earendil-works/pi-coding-agent@0.80.2`) before we build the native driver.
 
 ## What it proves
