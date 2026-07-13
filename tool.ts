@@ -1,4 +1,3 @@
-import { StringEnum } from "@mariozechner/pi-ai";
 import type {
   AgentToolResult,
   ExtensionAPI,
@@ -6,18 +5,26 @@ import type {
   ToolRenderResultOptions,
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import type { AutoloopManager } from "./manager.ts";
+import type { Driver } from "./driver.ts";
 import { findRun, readRegistry } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
 import { resolveAutoloopBin } from "./autoloop-bin.ts";
 import type { AutoloopDetails, RunRecord } from "./types.ts";
+import { formatIterationProgress } from "./native-state.ts";
 
 const AutoloopParams = Type.Object({
-  action: StringEnum(
-    ["run", "list", "status", "stop", "inspect", "presets"] as const,
+  action: Type.Union(
+    [
+      Type.Literal("run"),
+      Type.Literal("list"),
+      Type.Literal("status"),
+      Type.Literal("stop"),
+      Type.Literal("inspect"),
+      Type.Literal("presets"),
+    ],
     {
       description:
-        "Action: run (start autoloop), list (show runs), status (get progress), stop (terminate), inspect (read artifacts), presets (list available presets)",
+        "Action: run (start autoloop in THIS session), list (show runs), status (get progress), stop (terminate), inspect (read artifacts), presets (list available presets)",
     },
   ),
   preset: Type.Optional(
@@ -28,35 +35,41 @@ const AutoloopParams = Type.Object({
   ),
   runId: Type.Optional(
     Type.String({
-      description: "Run ID (required for status/stop/inspect)",
+      description: "Run ID (required for stop; optional for status)",
     }),
   ),
   artifact: Type.Optional(
-    StringEnum(["scratchpad", "journal", "metrics", "memory"] as const, {
-      description: "Artifact to inspect (for inspect action)",
-    }),
+    Type.Union(
+      [
+        Type.Literal("scratchpad"),
+        Type.Literal("journal"),
+        Type.Literal("metrics"),
+        Type.Literal("memory"),
+      ],
+      { description: "Artifact to inspect (for inspect action)" },
+    ),
   ),
   backend: Type.Optional(
-    Type.String({ description: "Override backend command (for run)" }),
+    Type.String({ description: "Ignored (native loops run in this session)" }),
   ),
   worktree: Type.Optional(
-    Type.Boolean({ description: "Use git worktree isolation (for run)" }),
+    Type.Boolean({ description: "Ignored (native loops run in this session, no worktree)" }),
   ),
   verbose: Type.Optional(
     Type.Boolean({ description: "Enable verbose/debug output (for run)" }),
   ),
 });
 
-export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
+export function createAutoloopTool(pi: ExtensionAPI, driver: Driver) {
   return {
     name: "autoloop",
     label: "Autoloop",
-    description: `Run autonomous LLM loops. Actions:
-- run: Start an autoloop (requires preset, prompt)
+    description: `Run autonomous LLM loops INSIDE this pi session (this session becomes the loop worker). Actions:
+- run: Start an autoloop (requires preset, prompt). Returns immediately; subsequent turns are driven by the loop.
 - list: Show active and recent runs
-- status: Get run progress — returns journal/state_dir/work_dir paths you can read with your own file tools (requires runId)
-- stop: Stop a running autoloop (requires runId)
-- inspect: Read structured run artifacts (requires runId, artifact). For ad-hoc files (progress.md, fix-log.md, scratchpads), get state_dir from status and read files directly with your read/bash tools.
+- status: Get run progress — returns journal path you can read with your own file tools
+- stop: Stop the running autoloop (optional runId)
+- inspect: Read structured run artifacts (requires runId, artifact)
 - presets: List available presets`,
     promptSnippet: "Run autonomous LLM loops for complex multi-step tasks",
     parameters: AutoloopParams,
@@ -101,70 +114,90 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
               "Missing required params: preset and prompt",
             );
           }
-          const state = manager.startRun(
-            params.preset,
-            params.prompt,
-            ctx.cwd,
-            {
-              backend: params.backend,
-              worktree: params.worktree,
+          try {
+            const state = driver.startRun({
+              preset: params.preset,
+              prompt: params.prompt,
+              cwd: ctx.cwd,
               verbose: params.verbose,
-            },
-          );
-          return result(
-            "run",
-            true,
-            `Started autoloop run (preset: ${params.preset})`,
-            {
-              runId: state.runId || "(discovering...)",
-            },
-          );
+            });
+            return result(
+              "run",
+              true,
+              `Started autoloop run ${state.runId} (preset: ${params.preset}). This session is now in loop mode: your next turns are the loop's iterations. Do the current role's work, then signal progress with loop_emit.`,
+              {
+                runId: state.runId,
+              },
+            );
+          } catch (err) {
+            return result("run", false, `Failed to start loop: ${(err as Error)?.message ?? err}`);
+          }
         }
         case "list": {
+          // Live in-process native loops, merged with legacy registry records.
+          const runs: RunRecord[] = [];
+          const active = new Set<string>();
+          for (const s of driver.getRuns()) {
+            active.add(s.runId);
+            runs.push(nativeToRecord(s));
+          }
           const allRecords = readRegistry(ctx.cwd);
-          // Deduplicate: keep only the latest record per run_id
           const latest = new Map<string, RunRecord>();
           for (const r of allRecords) latest.set(r.run_id, r);
-          const runs = [...latest.values()];
+          for (const r of latest.values()) {
+            if (active.has(r.run_id)) continue;
+            runs.push(r);
+          }
           const summary = runs.length
             ? runs
                 .map(
                   (r) =>
-                    `${r.run_id} [${r.status}] ${r.preset}|${r.backend} iter=${r.iteration + 1}/${r.max_iterations}`,
+                    `${r.run_id} [${r.status}] ${r.preset}|${r.backend} iter=${formatIterationProgress(r.iteration, r.max_iterations)}`,
                 )
                 .join("\n")
             : "No runs found";
           return result("list", true, summary, { runs });
         }
         case "status": {
+          // Prefer the live in-process loop state.
+          const live = params.runId
+            ? driver.getRuns().find((s) => s.runId === params.runId)
+            : driver.getRuns()[0];
+          if (live) {
+            const rec = nativeToRecord(live);
+            const msg = [
+              `${rec.run_id} [${rec.status}] iter=${formatIterationProgress(rec.iteration, rec.max_iterations)} role=${live.activeRole}`,
+              `journal: ${rec.journal_file}`,
+            ].join("\n");
+            return result("status", true, msg, {
+              record: rec,
+              runId: rec.run_id,
+            });
+          }
           if (!params.runId)
-            return result("status", false, "Missing required param: runId");
+            return result("status", false, "No active loop; pass a runId to inspect a past run");
           const record = findRun(ctx.cwd, params.runId);
-          const progress = manager.getProgress(params.runId);
           if (!record)
             return result("status", false, `Run not found: ${params.runId}`);
           const msg = [
-            `${record.run_id} [${record.status}] iter=${record.iteration + 1}/${record.max_iterations} event=${record.latest_event}`,
+            `${record.run_id} [${record.status}] iter=${formatIterationProgress(record.iteration, record.max_iterations)} event=${record.latest_event}`,
             `journal: ${record.journal_file}`,
             `state_dir: ${record.state_dir}`,
             `work_dir: ${record.work_dir}`,
           ].join("\n");
           return result("status", true, msg, {
             record,
-            progress,
             runId: params.runId,
           });
         }
         case "stop": {
-          if (!params.runId)
-            return result("stop", false, "Missing required param: runId");
-          const stopped = await manager.stopRun(params.runId);
+          const stopped = await driver.stop(params.runId);
           return result(
             "stop",
             stopped,
             stopped
-              ? `Stopped run ${params.runId}`
-              : `Failed to stop run ${params.runId}`,
+              ? `Stopping loop${params.runId ? ` ${params.runId}` : ""} (terminates at next boundary)`
+              : `No active loop to stop${params.runId ? `: ${params.runId}` : ""}`,
             { runId: params.runId },
           );
         }
@@ -200,6 +233,33 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
           );
       }
     },
+  };
+}
+
+/** Project a live native LoopState onto the legacy RunRecord shape for renderers. */
+function nativeToRecord(s: import("./types.ts").LoopState): RunRecord {
+  const running = s.phase !== "idle";
+  return {
+    run_id: s.runId,
+    status: running ? "running" : "completed",
+    preset: s.preset,
+    objective: s.objective,
+    trigger: "cli",
+    project_dir: "",
+    work_dir: "",
+    state_dir: "",
+    journal_file: s.journalFile,
+    parent_run_id: "",
+    backend: "native",
+    created_at: new Date(s.startedAt).toISOString(),
+    updated_at: new Date().toISOString(),
+    iteration: s.iteration,
+    max_iterations: s.maxIterations,
+    stop_reason: "",
+    latest_event: "",
+    isolation_mode: "none",
+    worktree_name: "",
+    worktree_path: "",
   };
 }
 

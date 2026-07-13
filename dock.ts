@@ -2,8 +2,7 @@ import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Component } from "@mariozechner/pi-tui";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { readFileSync } from "node:fs";
-import type { AutoloopManager } from "./manager.ts";
-import { readRegistry, findRun } from "./registry.ts";
+import type { Driver } from "./driver.ts";
 import { formatElapsed } from "./types.ts";
 
 const DOCK_WIDGET_ID = "autoloop-dock";
@@ -25,18 +24,21 @@ const MEANINGFUL_TOPICS = new Set([
 ]);
 
 /**
- * Read the latest meaningful event payload from a journal file.
- * Returns a single-line summary (newlines collapsed), or "" if none found.
+ * Read the latest meaningful event { topic, payload } from a journal file.
+ * Returns { topic, payload } for the newest meaningful entry, or null.
  */
-function readLatestPayload(journalFile: string): string {
+function readLatestMeaningful(journalFile: string): { topic: string; payload: string } | null {
   try {
     const content = readFileSync(journalFile, "utf-8");
     const lines = content.split("\n").filter((l) => l.trim());
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const entry = JSON.parse(lines[i]) as { topic?: string; payload?: string };
-        if (entry.topic && MEANINGFUL_TOPICS.has(entry.topic) && entry.payload) {
-          return entry.payload.replace(/\s+/g, " ").trim();
+        if (entry.topic && MEANINGFUL_TOPICS.has(entry.topic)) {
+          return {
+            topic: entry.topic,
+            payload: (entry.payload ?? "").replace(/\s+/g, " ").trim(),
+          };
         }
       } catch {
         // skip malformed lines
@@ -45,7 +47,7 @@ function readLatestPayload(journalFile: string): string {
   } catch {
     // file unreadable
   }
-  return "";
+  return null;
 }
 
 function renderPanelRule(width: number, theme: Theme): string {
@@ -60,24 +62,24 @@ function padLine(content: string, width: number): string {
 }
 
 export class LoopDockComponent implements Component {
-  private manager: AutoloopManager;
+  private driver: Driver;
   private theme: Theme;
   private tui: { requestRender(): void };
   private cwd: string;
   private unsubscribe: (() => void) | null = null;
 
   constructor(opts: {
-    manager: AutoloopManager;
+    driver: Driver;
     theme: Theme;
     tui: { requestRender(): void };
     cwd: string;
   }) {
-    this.manager = opts.manager;
+    this.driver = opts.driver;
     this.theme = opts.theme;
     this.tui = opts.tui;
     this.cwd = opts.cwd;
 
-    this.unsubscribe = this.manager.onEvent(() => {
+    this.unsubscribe = this.driver.onEvent(() => {
       this.tui.requestRender();
     });
   }
@@ -93,38 +95,24 @@ export class LoopDockComponent implements Component {
     const dim = (s: string) => theme.fg("dim", s);
     const accent = (s: string) => theme.fg("accent", s);
 
-    const activeRuns = this.manager.getRuns();
+    const activeRuns = this.driver.getRuns();
     if (activeRuns.length === 0) return [];
 
     const lines: string[] = [renderPanelRule(width, theme)];
 
     for (const run of activeRuns) {
-      const id = run.runId || "discovering...";
+      const id = run.runId || "starting...";
       const elapsed = formatElapsed(Date.now() - run.startedAt);
-      const progress = this.manager.getProgress(run.runId);
-      // Find the latest meaningful event (skip structural like iteration.start)
-      const meaningful = [...progress]
-        .reverse()
-        .find((p) => MEANINGFUL_TOPICS.has(p.emitted) || MEANINGFUL_TOPICS.has(p.recent));
-      const last = meaningful ?? progress.at(-1);
+      const iter = run.iteration;
+      const maxIter = run.maxIterations || "?";
+      const role = run.activeRole;
 
-      // Find registry record for iteration info
-      const record = run.runId ? findRun(this.cwd, run.runId) : undefined;
-      const iter = record?.iteration ?? last?.iter ?? 0;
-      const maxIter = record?.max_iterations ?? "?";
-      const recordEventMeaningful =
-        record?.latest_event && MEANINGFUL_TOPICS.has(record.latest_event)
-          ? record.latest_event
-          : "";
-      const latestEvent =
-        recordEventMeaningful ||
-        (last && (MEANINGFUL_TOPICS.has(last.emitted) ? last.emitted : MEANINGFUL_TOPICS.has(last.recent) ? last.recent : "")) ||
-        "";
-      const role = last?.role ?? "";
+      // Latest meaningful journal event (topic + payload summary).
+      const meaningful = run.journalFile ? readLatestMeaningful(run.journalFile) : null;
+      const latestEvent = meaningful?.topic ?? "";
 
-      // Single-line status: 🔁 runId (preset|backend) iter=N/M elapsed · role → event
-      const backend = record?.backend ?? "";
-      const label = backend ? `${run.preset}|${backend}` : run.preset;
+      // Single-line status: 🔁 runId (preset) iter=N/M elapsed · role → event
+      const label = run.preset;
       const detailParts: string[] = [];
       if (role) detailParts.push(theme.fg("warning", role));
       if (latestEvent) detailParts.push(dim(latestEvent));
@@ -138,12 +126,9 @@ export class LoopDockComponent implements Component {
         detail;
       lines.push(padLine(line, width));
 
-      // Second line: latest meaningful event payload (summary), truncated
-      if (record?.journal_file) {
-        const payload = readLatestPayload(record.journal_file);
-        if (payload) {
-          lines.push(padLine(dim(payload), width));
-        }
+      // Second line: latest meaningful event payload (summary), truncated.
+      if (meaningful?.payload) {
+        lines.push(padLine(dim(meaningful.payload), width));
       }
     }
 
@@ -156,7 +141,7 @@ export class LoopDockComponent implements Component {
 }
 
 export function setupLoopDock(
-  manager: AutoloopManager,
+  driver: Driver,
   setWidget: (
     key: string,
     content: unknown,
@@ -167,7 +152,7 @@ export function setupLoopDock(
   let dockComponent: LoopDockComponent | null = null;
 
   function updateDock() {
-    const activeRuns = manager.getRuns();
+    const activeRuns = driver.getRuns();
     if (activeRuns.length === 0) {
       setWidget(DOCK_WIDGET_ID, undefined);
       if (dockComponent) {
@@ -181,7 +166,7 @@ export function setupLoopDock(
       setWidget(
         DOCK_WIDGET_ID,
         (tui: { requestRender(): void }, theme: Theme) => {
-          dockComponent = new LoopDockComponent({ manager, theme, tui, cwd: getCwd() });
+          dockComponent = new LoopDockComponent({ driver, theme, tui, cwd: getCwd() });
           return dockComponent;
         },
         { placement: "aboveEditor" },
@@ -189,7 +174,7 @@ export function setupLoopDock(
     }
   }
 
-  const unsub = manager.onEvent(() => updateDock());
+  const unsub = driver.onEvent(() => updateDock());
 
   return () => {
     unsub();

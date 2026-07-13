@@ -1,68 +1,83 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { execFileSync } from "node:child_process";
-import { AutoloopManager } from "./manager.ts";
+import { Driver } from "./driver.ts";
+import { registerLoopTools } from "./tools-loop.ts";
 import { setupMessageRenderer } from "./render.ts";
-import { setupLoopDock, DOCK_WIDGET_ID } from "./dock.ts";
+import { setupLoopDock } from "./dock.ts";
 import { createAutoloopTool } from "./tool.ts";
 import { findRun, readRegistry } from "./registry.ts";
 import { allRunCompletions, runningRunCompletions, inspectCompletions } from "./completions.ts";
 import { resolveAutoloopBin } from "./autoloop-bin.ts";
-import { MESSAGE_TYPE_AUTOLOOP_UPDATE, type AutoloopUpdateDetails, formatElapsed } from "./types.ts";
+import {
+  MESSAGE_TYPE_AUTOLOOP_UPDATE,
+  type AutoloopUpdateDetails,
+  formatElapsed,
+} from "./types.ts";
+import { formatIterationProgress } from "./native-state.ts";
 
 export default function (pi: ExtensionAPI) {
-  const manager = new AutoloopManager();
+  const driver = new Driver(pi);
   let unsubscribe: (() => void) | null = null;
   let cleanupDock: (() => void) | null = null;
   let latestContext: ExtensionContext | null = null;
 
   setupMessageRenderer(pi);
 
-  unsubscribe = manager.onEvent((event) => {
+  // When a native loop terminates, surface a completion message in the session.
+  unsubscribe = driver.onEvent((event) => {
     if (event.type === "run_ended") {
-      const { runId, record } = event;
-      const status = record?.status ?? "unknown";
-      const preset = record?.preset ?? "unknown";
-      const iter = record?.iteration ?? 0;
-      const max = record?.max_iterations ?? 0;
-
-      // Compute elapsed from active run state or registry timestamps
-      const activeRun = manager.getRuns().find((r) => r.runId === runId);
-      let elapsed: string;
-      if (activeRun) {
-        elapsed = formatElapsed(Date.now() - activeRun.startedAt);
-      } else if (record?.created_at && record?.updated_at) {
-        elapsed = formatElapsed(new Date(record.updated_at).getTime() - new Date(record.created_at).getTime());
-      } else {
-        elapsed = "?";
-      }
+      const { runId } = event;
+      // Derive the completion string from the RunSummary + loop limits (carried on
+      // the event), NOT from the in-memory LoopState — the loop is already deleted
+      // by finalize() and its counters are not the source of truth for this string.
+      const info = event.info;
+      const preset = info?.preset ?? "unknown";
+      const completed = info?.iterations ?? 0;
+      const max = info?.maxIterations ?? 0;
+      const status = info?.stopReason ?? "finished";
+      const elapsed = info ? formatElapsed(Date.now() - info.startedAt) : "?";
 
       const details: AutoloopUpdateDetails = {
         runId,
         preset,
         status,
-        iteration: iter,
+        iteration: completed,
         maxIterations: max,
         elapsed,
       };
 
+      // completed = number of iterations that actually finished; max = configured
+      // ceiling. Both come straight from the engine's terminal summary/limits.
+      const progress = max > 0 ? `${completed}/${max} iterations` : `${completed} iterations`;
       pi.sendMessage(
         {
           customType: MESSAGE_TYPE_AUTOLOOP_UPDATE,
-          content: `Autoloop run \`${runId}\` (${preset}) finished: **${status}** at iteration ${iter + 1}/${max}`,
+          content: `Autoloop run \`${runId}\` (${preset}) ${status} after ${progress}`,
           display: true,
           details,
         },
-        { triggerTurn: true },
+        { triggerTurn: false },
       );
     }
   });
 
-  pi.registerTool(createAutoloopTool(pi, manager));
+  // Native loop_emit / loop_memory / loop_task tools (used by the worker inside a loop).
+  registerLoopTools(pi, driver);
+
+  // The user-facing `autoloop` tool (run/list/status/stop/inspect/presets).
+  pi.registerTool(createAutoloopTool(pi, driver));
+
+  // -- Native loop drive: delegate pi session events to the driver. Each handler
+  //    no-ops unless a loop is actively driving this session's turns. --
+
+  pi.on("before_agent_start", (event, ctx) => driver.onBeforeAgentStart(event, ctx));
+  pi.on("context", (event, ctx) => driver.onContext(event, ctx));
+  pi.on("agent_end", (event, ctx) => driver.onAgentEnd(event, ctx));
 
   pi.on("session_start", async (_event, ctx) => {
     latestContext = ctx;
 
-    // Verify the autoloop binary is runnable
+    // Verify the autoloop binary is runnable (still used by inspect/presets).
     try {
       execFileSync(resolveAutoloopBin(), ["--version"], { stdio: "ignore", timeout: 5000 });
     } catch {
@@ -72,21 +87,22 @@ export default function (pi: ExtensionAPI) {
       );
     }
 
-    // Set up the iteration dock (component factory, updates in place)
+    // Set up the iteration dock (component factory, updates in place).
     cleanupDock?.();
     cleanupDock = setupLoopDock(
-      manager,
+      driver,
       (key, content, options) => ctx.ui.setWidget(key, content as any, options as any),
       () => latestContext?.cwd ?? process.cwd(),
     );
   });
 
   pi.on("session_shutdown", async () => {
+    // Mark any active native run interrupted (the loop dies with pi).
+    driver.shutdown();
     unsubscribe?.();
     unsubscribe = null;
     cleanupDock?.();
     cleanupDock = null;
-    manager.cleanup();
   });
 
   // -- Slash commands: /loop:* --
@@ -106,79 +122,97 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       latestContext = ctx;
-      const state = manager.startRun(preset, prompt, ctx.cwd);
-      ctx.ui.notify(
-        `Started autoloop: ${preset} (run ID discovering...)`,
-        "info",
-      );
-    },
-  });
-
-  pi.registerCommand("loop:list", {
-    description: "List all autoloop runs",
-    handler: async (_args, ctx) => {
-      const allRecords = readRegistry(ctx.cwd);
-      const latest = new Map<string, typeof allRecords[0]>();
-      for (const r of allRecords) latest.set(r.run_id, r);
-      const runs = [...latest.values()];
-      if (!runs.length) {
-        ctx.ui.notify("No autoloop runs found", "info");
-        return;
+      try {
+        const state = driver.startRun({ preset, prompt, cwd: ctx.cwd });
+        ctx.ui.notify(
+          `Started autoloop: ${preset} (run ${state.runId}). This session is now the loop worker.`,
+          "info",
+        );
+      } catch (err) {
+        ctx.ui.notify(`Failed to start loop: ${(err as Error)?.message ?? err}`, "error");
       }
-      const lines = runs.map(
-        (r) =>
-          `${r.run_id} [${r.status}] ${r.preset}|${r.backend} iter=${r.iteration + 1}/${r.max_iterations}`,
-      );
-      ctx.ui.notify(lines.join("\n"), "info");
     },
   });
 
   const getCwd = () => latestContext?.cwd ?? process.cwd();
 
+  pi.registerCommand("loop:list", {
+    description: "List all autoloop runs",
+    handler: async (_args, ctx) => {
+      const lines: string[] = [];
+      // Active native loops (in-process).
+      for (const s of driver.getRuns()) {
+        lines.push(
+          `${s.runId} [${s.phase}] ${s.preset} iter=${formatIterationProgress(s.iteration, s.maxIterations)} role=${s.activeRole}`,
+        );
+      }
+      // Legacy registry runs (from the old spawned-CLI version).
+      const active = new Set(driver.getRuns().map((s) => s.runId));
+      const allRecords = readRegistry(ctx.cwd);
+      const latest = new Map<string, typeof allRecords[0]>();
+      for (const r of allRecords) latest.set(r.run_id, r);
+      for (const r of latest.values()) {
+        if (active.has(r.run_id)) continue;
+        lines.push(
+          `${r.run_id} [${r.status}] ${r.preset}|${r.backend} iter=${formatIterationProgress(r.iteration, r.max_iterations)}`,
+        );
+      }
+      ctx.ui.notify(lines.length ? lines.join("\n") : "No autoloop runs found", "info");
+    },
+  });
+
   pi.registerCommand("loop:status", {
     description: "Show status of a run. Usage: /loop:status <runId>",
-    getArgumentCompletions: allRunCompletions(manager, getCwd),
+    getArgumentCompletions: allRunCompletions(driver, getCwd),
     handler: async (args, ctx) => {
       const runId = args?.trim();
       if (!runId) {
         ctx.ui.notify("Usage: /loop:status <runId>", "warning");
         return;
       }
+      // Prefer the live in-process loop state.
+      const live = driver.getRuns().find((s) => s.runId === runId);
+      if (live) {
+        const msg = [
+          `Run: ${live.runId}`,
+          `Phase: ${live.phase}`,
+          `Preset: ${live.preset}`,
+          `Iteration: ${formatIterationProgress(live.iteration, live.maxIterations)}`,
+          `Role: ${live.activeRole}`,
+          `Journal: ${live.journalFile}`,
+        ].join("\n");
+        ctx.ui.notify(msg, "info");
+        return;
+      }
+      // Fall back to legacy registry records.
       const record = findRun(ctx.cwd, runId);
       if (!record) {
         ctx.ui.notify(`Run not found: ${runId}`, "warning");
         return;
       }
-      const progress = manager.getProgress(runId);
-      const last = progress.at(-1);
       const msg = [
         `Run: ${record.run_id}`,
         `Status: ${record.status}`,
         `Preset: ${record.preset}`,
         `Backend: ${record.backend}`,
-        `Iteration: ${record.iteration + 1}/${record.max_iterations}`,
+        `Iteration: ${formatIterationProgress(record.iteration, record.max_iterations)}`,
         `Event: ${record.latest_event}`,
-        last ? `Role: ${last.role} | Outcome: ${last.outcome}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
+      ].join("\n");
       ctx.ui.notify(msg, "info");
     },
   });
 
   pi.registerCommand("loop:stop", {
-    description: "Stop a running autoloop. Usage: /loop:stop <runId>",
-    getArgumentCompletions: runningRunCompletions(manager, getCwd),
+    description: "Stop the running autoloop. Usage: /loop:stop [runId]",
+    getArgumentCompletions: runningRunCompletions(driver, getCwd),
     handler: async (args, ctx) => {
-      const runId = args?.trim();
-      if (!runId) {
-        ctx.ui.notify("Usage: /loop:stop <runId>", "warning");
-        return;
-      }
+      const runId = args?.trim() || undefined;
       latestContext = ctx;
-      const stopped = await manager.stopRun(runId);
+      const stopped = await driver.stop(runId);
       ctx.ui.notify(
-        stopped ? `Stopped: ${runId}` : `Failed to stop: ${runId}`,
+        stopped
+          ? `Stopping loop${runId ? ` ${runId}` : ""} (terminates at next boundary)`
+          : `No active loop to stop${runId ? `: ${runId}` : ""}`,
         stopped ? "info" : "error",
       );
     },
@@ -187,7 +221,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("loop:inspect", {
     description:
       "Read a run artifact. Usage: /loop:inspect <runId> <scratchpad|journal|metrics|memory>",
-    getArgumentCompletions: inspectCompletions(manager, getCwd),
+    getArgumentCompletions: inspectCompletions(driver, getCwd),
     handler: async (args, ctx) => {
       const parts = args?.trim().split(/\s+/) ?? [];
       const runId = parts[0];
