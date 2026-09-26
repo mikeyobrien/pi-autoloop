@@ -13,6 +13,11 @@ interface HostOptions {
   signal: AbortSignal;
 }
 
+// Metareview runs a second worker, which the host preflight refuses; most bundled presets enable it.
+const IN_SESSION_CONFIG = { review: { enabled: false } };
+// The harness logs to stderr, which would draw over pi's TUI.
+const QUIET = "none";
+
 /** The generated `autoloops memory|task` wrappers re-invoke this command. */
 const selfCommand = () => `'${resolveAutoloopBin()}'`;
 
@@ -27,19 +32,23 @@ export const harnessAdapter: HarnessPort = {
   async run(request: StartRequest, host: HostWorker, signal: AbortSignal): Promise<RunOutcome> {
     const source = resolvePresetSource(request.preset, "");
     if (!source) throw new Error(`unknown autoloop preset: ${request.preset}`);
-    const options: HostOptions & { workDir: string; presetFile?: string } = {
+    const options: HostOptions & { workDir: string; presetFile?: string; configOverride: Record<string, unknown>; logLevel: string } = {
       host,
       signal,
       workDir: request.cwd,
+      configOverride: IN_SESSION_CONFIG,
+      logLevel: QUIET,
       ...(source.kind === "file" ? { presetFile: source.file } : {}),
     };
     return run(source.projectDir, request.objective, selfCommand(), options);
   },
 
   async resume(runId: string, cwd: string, host: HostWorker, signal: AbortSignal): Promise<RunOutcome> {
-    const options: HostOptions & { selfCommand: string; baseStateDir: string } = {
+    const options: HostOptions & { selfCommand: string; baseStateDir: string; configOverride: Record<string, unknown>; logLevel: string } = {
       host,
       signal,
+      configOverride: IN_SESSION_CONFIG,
+      logLevel: QUIET,
       selfCommand: selfCommand(),
       baseStateDir: join(cwd, ".autoloop"),
     };
