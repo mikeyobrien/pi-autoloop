@@ -1,4 +1,4 @@
-import type { AutocompleteItem } from "@mariozechner/pi-tui";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { AutoloopManager } from "./manager.ts";
 import { readRegistry } from "./registry.ts";
 import type { RunRecord } from "./types.ts";

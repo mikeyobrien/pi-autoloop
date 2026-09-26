@@ -1,11 +1,10 @@
-import { StringEnum } from "@mariozechner/pi-ai";
+import { StringEnum, Type } from "@earendil-works/pi-ai";
 import type {
   AgentToolResult,
   ExtensionAPI,
   Theme,
   ToolRenderResultOptions,
-} from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+} from "@earendil-works/pi-coding-agent";
 import type { AutoloopManager } from "./manager.ts";
 import { findRun, readRegistry } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";

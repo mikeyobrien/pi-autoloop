@@ -12,5 +12,5 @@
     "isolatedModules": true,
     "types": ["node"]
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "test/**/*.ts"]
 }
