@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { asDraft, endMarker, iterationMarker } from "../markers.ts";
 import { CONTINUE_PROMPT, SessionLoop } from "../session-loop.ts";
-import { assistant, beforeSettle, FakeHarness, FakePi, fakeTurn, flush, markerMessage, user } from "./fakes.ts";
+import { assistant, assistantError, beforeSettle, FakeHarness, FakePi, fakeTurn, flush, markerMessage, user } from "./fakes.ts";
 
 const REQUEST = { preset: "autocode", objective: "Add rate limiting", cwd: "/repo" };
 
@@ -350,3 +350,29 @@ describe("marker dropped by Esc before delivery", () => {
     expect(pi.sent).toHaveLength(1);
   });
 });
+
+describe("assistant errors", () => {
+  it("reports the provider error text instead of an earlier reply", async () => {
+    const { result, marker } = startFirstTurn();
+    loop.onMessageEnd(assistant("progress so far"));
+    loop.onMessageEnd(assistantError("", "429 Too Many Requests"));
+    void loop.onBeforeSettle(beforeSettle([marker], "error"));
+    expect(await result).toMatchObject({ status: "error", output: "429 Too Many Requests" });
+  });
+
+  it("keeps partial text from the failing response alongside the error", async () => {
+    const { result, marker } = startFirstTurn();
+    loop.onMessageEnd(assistantError("halfway", "overloaded_error"));
+    void loop.onBeforeSettle(beforeSettle([marker], "error"));
+    expect(await result).toMatchObject({ output: "halfway\noverloaded_error" });
+  });
+
+  it("marks an error without a message", async () => {
+    const { result, marker } = startFirstTurn();
+    loop.onMessageEnd(assistant("earlier"));
+    loop.onMessageEnd(assistantError(" ", undefined));
+    void loop.onBeforeSettle(beforeSettle([marker], "error"));
+    expect(await result).toMatchObject({ output: "assistant error" });
+  });
+});
+

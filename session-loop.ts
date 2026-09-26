@@ -208,7 +208,11 @@ export class SessionLoop implements HostWorker {
       costUsd: armed.usage.costUsd + usage.cost.total,
     };
     const text = message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
-    if (text.trim()) armed.output = text;
+    // The harness classifies failures from the output, so an error must not report an earlier reply's text.
+    if (message.stopReason === "error") {
+      const error = message.errorMessage ?? "assistant error";
+      armed.output = text.trim() ? `${text}\n${error}` : error;
+    } else if (text.trim()) armed.output = text;
     this.pi.update(this.view());
   }
 

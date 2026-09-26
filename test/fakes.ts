@@ -95,6 +95,10 @@ export function markerMessage(message: MarkerMessage<unknown>): AgentMessage {
   return { role: "custom", ...message, timestamp: 0 } as AgentMessage;
 }
 
+export function assistantError(text: string, errorMessage: string | undefined): AgentMessage {
+  return { ...assistant(text), stopReason: "error", ...(errorMessage ? { errorMessage } : {}) } as AgentMessage;
+}
+
 export function assistant(text: string, cost = 0.01): AgentMessage {
   return {
     role: "assistant",
