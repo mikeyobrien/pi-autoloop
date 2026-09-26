@@ -2,7 +2,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
-import type { AutoloopManager } from "./manager.ts";
+import type { AutoloopManager } from "./detached.ts";
 import { readRegistry, findRun } from "./registry.ts";
 import { formatElapsed } from "./types.ts";
 

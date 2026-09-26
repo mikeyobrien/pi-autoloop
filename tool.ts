@@ -5,7 +5,7 @@ import type {
   Theme,
   ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import type { AutoloopManager } from "./manager.ts";
+import type { AutoloopManager } from "./detached.ts";
 import { findRun, readRegistry } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
 import { resolveAutoloopBin } from "./autoloop-bin.ts";
@@ -176,7 +176,7 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
             );
           const res = await pi.exec(
             resolveAutoloopBin(),
-            ["inspect", params.artifact, "--run-id", params.runId, "--format", "md"],
+            ["inspect", params.artifact, "--run", params.runId, "--format", "md"],
             { timeout: 10_000 },
           );
           const output =

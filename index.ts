@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
-import { AutoloopManager } from "./manager.ts";
+import { AutoloopManager } from "./detached.ts";
 import { setupMessageRenderer } from "./render.ts";
 import { setupLoopDock, DOCK_WIDGET_ID } from "./dock.ts";
 import { createAutoloopTool } from "./tool.ts";
@@ -52,7 +52,6 @@ export default function (pi: ExtensionAPI) {
           display: true,
           details,
         },
-        { triggerTurn: true },
       );
     }
   });
@@ -206,7 +205,7 @@ export default function (pi: ExtensionAPI) {
       }
       const res = await pi.exec(
         resolveAutoloopBin(),
-        ["inspect", artifact, "--run-id", runId, "--format", "md"],
+        ["inspect", artifact, "--run", runId, "--format", "md"],
         { timeout: 10_000 },
       );
       const output = res.stdout?.trim() || res.stderr?.trim() || "No output";
