@@ -33,6 +33,7 @@ function register(pi: ExtensionAPI, harness: HarnessPort) {
       sendUserMessage: (text) => pi.sendUserMessage(text),
       abortAgent: () => latestContext?.abort(),
       hasPendingMessages: () => latestContext?.hasPendingMessages() ?? false,
+      notify: (text, level) => latestContext?.ui.notify(text, level),
       update: (view) => {
         setEmitToolActive(view !== null);
         dock?.refresh();
@@ -207,9 +208,10 @@ function register(pi: ExtensionAPI, harness: HarnessPort) {
         ctx.ui.notify("Usage: /loop:guide <text>", "warning");
         return;
       }
+      latestContext = ctx;
       try {
         const queued = loop.guide(text);
-        ctx.ui.notify(queued ? "Guidance queued for the next iteration" : "No live autoloop with a run id yet", queued ? "info" : "warning");
+        ctx.ui.notify(queued ? "Guidance queued for the next iteration" : "No live autoloop in this session", queued ? "info" : "warning");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }

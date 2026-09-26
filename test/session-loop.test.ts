@@ -292,13 +292,67 @@ describe("harness-driven interruption and failure", () => {
 });
 
 describe("guide", () => {
-  it("needs a live loop with a known run id", () => {
+  it("needs a live loop", () => {
     expect(loop.guide("x")).toBe(false);
+  });
+
+  it("writes straight through once the run id is known", () => {
     loop.start(REQUEST);
-    expect(loop.guide("x")).toBe(false);
     void harness.turn(fakeTurn());
     expect(loop.guide("prefer lib/limits.ts")).toBe(true);
     expect(harness.guidance).toEqual([{ runId: "run-1", cwd: "/repo", text: "prefer lib/limits.ts" }]);
+  });
+
+  it("holds guidance given before the run id and flushes it when the first turn arrives", () => {
+    loop.start(REQUEST);
+    expect(loop.guide("first")).toBe(true);
+    expect(loop.guide("second")).toBe(true);
+    expect(harness.guidance).toEqual([]);
+    void harness.turn(fakeTurn());
+    expect(harness.guidance).toEqual([
+      { runId: "run-1", cwd: "/repo", text: "first" },
+      { runId: "run-1", cwd: "/repo", text: "second" },
+    ]);
+    void loop.onBeforeSettle(beforeSettle([]));
+    expect(harness.guidance).toHaveLength(2);
+  });
+
+  it("reports a failed flush instead of throwing at the harness", async () => {
+    harness.guide = () => {
+      throw new Error("no autoloop run matching run-1");
+    };
+    loop.start(REQUEST);
+    loop.guide("x");
+    const result = harness.turn(fakeTurn());
+    expect(pi.notices).toEqual([{ text: "Guidance not delivered: no autoloop run matching run-1", level: "warning" }]);
+    expect(loop.stop()).toBe(true);
+    expect(await result).toMatchObject({ status: "interrupted" });
+  });
+
+  it("stringifies a non-Error flush failure", () => {
+    harness.guide = () => {
+      throw "disk full";
+    };
+    loop.start(REQUEST);
+    loop.guide("x");
+    void harness.turn(fakeTurn());
+    expect(pi.notices).toEqual([{ text: "Guidance not delivered: disk full", level: "warning" }]);
+  });
+
+  it("notifies that held guidance was dropped when the run ends before any turn", async () => {
+    loop.start(REQUEST);
+    loop.guide("use redis");
+    await harness.crash(new Error("preflight failed"));
+    expect(harness.guidance).toEqual([]);
+    expect(pi.notices).toEqual([
+      { text: "The run ended before it started; guidance not delivered: use redis", level: "warning" },
+    ]);
+  });
+
+  it("says nothing at the end when no guidance was held", async () => {
+    startFirstTurn();
+    await harness.end({ runId: "run-1", iterations: 1, stopReason: "completion_event" });
+    expect(pi.notices).toEqual([]);
   });
 });
 

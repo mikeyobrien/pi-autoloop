@@ -11,6 +11,7 @@ export interface PiPort {
   abortAgent(): void;
   /** True while pi still holds queued steering or follow-up messages. */
   hasPendingMessages(): boolean;
+  notify(text: string, level: "info" | "warning"): void;
   /** Called after every phase change; drives the dock, status line, and emit tool activation. */
   update(view: LoopView | null): void;
 }
@@ -51,6 +52,8 @@ interface LiveRun {
   runId: string | null;
   lastTurn: HostTurn | null;
   costUsd: number;
+  /** /loop:guide text given before the harness assigned a run id. */
+  pendingGuidance: string[];
 }
 
 interface ArmedTurn {
@@ -116,10 +119,12 @@ export class SessionLoop implements HostWorker {
     return true;
   }
 
-  /** Durable guidance for the next iteration prompt. Returns false when no run id is known yet. */
+  /** Durable guidance for the next iteration prompt; held until the harness assigns a run id. Returns false when idle. */
   guide(text: string): boolean {
-    if (this.phase.kind === "idle" || this.phase.live.runId === null) return false;
-    this.harness.guide(this.phase.live.runId, this.phase.live.cwd, text);
+    if (this.phase.kind === "idle") return false;
+    const { live } = this.phase;
+    if (live.runId === null) live.pendingGuidance.push(text);
+    else this.harness.guide(live.runId, live.cwd, text);
     return true;
   }
 
@@ -165,6 +170,7 @@ export class SessionLoop implements HostWorker {
     }
     phase.live.runId = turn.runId;
     phase.live.lastTurn = turn;
+    this.flushGuidance(phase.live, turn.runId);
     if (turn.signal.aborted) return Promise.resolve({ status: "interrupted", output: "" });
     return new Promise((resolve) => {
       const onAbort = () => this.interrupt(armed);
@@ -265,7 +271,15 @@ export class SessionLoop implements HostWorker {
     if (this.phase.kind !== "idle") {
       throw new Error(`autoloop ${this.phase.live.runId ?? "run"} is already live in this session; /loop:stop it first`);
     }
-    const live: LiveRun = { preset, cwd, runId, controller: new AbortController(), lastTurn: null, costUsd: 0 };
+    const live: LiveRun = {
+      preset,
+      cwd,
+      runId,
+      controller: new AbortController(),
+      lastTurn: null,
+      costUsd: 0,
+      pendingGuidance: [],
+    };
     this.setPhase({ kind: "deciding", live, parked: null });
     return live;
   }
@@ -295,8 +309,22 @@ export class SessionLoop implements HostWorker {
     };
     const parked = this.phase.kind === "deciding" ? this.phase.parked : null;
     this.setPhase({ kind: "idle" });
+    if (live.pendingGuidance.length > 0) {
+      this.pi.notify(`The run ended before it started; guidance not delivered: ${live.pendingGuidance.join(" / ")}`, "warning");
+    }
     if (parked) parked.resolve({ kind: "end", end });
     else this.pi.sendMessage(endMarker(end));
+  }
+
+  /** Runs inside runTurn, so a failed write is reported rather than thrown at the harness. */
+  private flushGuidance(live: LiveRun, runId: string): void {
+    for (const text of live.pendingGuidance.splice(0)) {
+      try {
+        this.harness.guide(runId, live.cwd, text);
+      } catch (error) {
+        this.pi.notify(`Guidance not delivered: ${error instanceof Error ? error.message : String(error)}`, "warning");
+      }
+    }
   }
 
   /** Ends the armed turn as interrupted. No-op once the turn has moved on. */

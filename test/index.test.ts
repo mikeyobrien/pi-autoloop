@@ -42,6 +42,19 @@ beforeEach(() => {
 });
 
 describe("in-session wiring", () => {
+  it("/loop:guide before the run id is queued and flushed on the first turn", async () => {
+    const ctx = fakeCtx();
+    await wiring.commands.get("loop:guide")!("prefer redis", ctx);
+    expect(ctx.notices).toEqual([{ text: "No live autoloop in this session", level: "warning" }]);
+
+    await wiring.commands.get("loop:run")!("autocode x", ctx);
+    ctx.notices.length = 0;
+    await wiring.commands.get("loop:guide")!("prefer redis", ctx);
+    expect(ctx.notices).toEqual([{ text: "Guidance queued for the next iteration", level: "info" }]);
+    void harness.turn(fakeTurn());
+    expect(harness.guidance).toEqual([{ runId: "run-1", cwd: "/repo", text: "prefer redis" }]);
+  });
+
   it("re-sends a marker dropped by an abort through the session's pending-message check", async () => {
     const sent: unknown[] = [];
     (wiring.api as unknown as Record<string, unknown>).sendMessage = (m: unknown) => sent.push(m);

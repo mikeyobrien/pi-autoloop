@@ -24,6 +24,7 @@ export class FakePi implements PiPort {
   userMessages: string[] = [];
   aborts = 0;
   pending = false;
+  notices: Array<{ text: string; level: string }> = [];
   views: Array<LoopView | null> = [];
 
   sendMessage(message: MarkerMessage<unknown>, options?: object): void {
@@ -37,6 +38,9 @@ export class FakePi implements PiPort {
   }
   hasPendingMessages(): boolean {
     return this.pending;
+  }
+  notify(text: string, level: string): void {
+    this.notices.push({ text, level });
   }
   update(view: LoopView | null): void {
     this.views.push(view);
