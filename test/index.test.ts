@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it } from "vitest";
 import { autoloopExtension } from "../index.ts";
+import { TREE_BLOCKED } from "../session-loop.ts";
 import { FakeHarness, fakeTurn } from "./fakes.ts";
 
 type Handler = (...args: any[]) => any;
@@ -42,6 +43,17 @@ beforeEach(() => {
 });
 
 describe("in-session wiring", () => {
+  it("cancels tree navigation while a loop is live", async () => {
+    const tree = wiring.handlers.get("session_before_tree")!;
+    const ctx = fakeCtx();
+    expect(tree({ type: "session_before_tree" }, ctx)).toBeUndefined();
+
+    await wiring.commands.get("loop:run")!("autocode x", ctx);
+    ctx.notices.length = 0;
+    expect(tree({ type: "session_before_tree" }, ctx)).toEqual({ cancel: true });
+    expect(ctx.notices).toEqual([{ text: TREE_BLOCKED, level: "warning" }]);
+  });
+
   it("/loop:guide before the run id is queued and flushed on the first turn", async () => {
     const ctx = fakeCtx();
     await wiring.commands.get("loop:guide")!("prefer redis", ctx);

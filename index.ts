@@ -103,6 +103,12 @@ function register(pi: ExtensionAPI, harness: HarnessPort) {
   pi.on("agent_settled", () => loop.onSettled());
   // Compaction would summarise the iteration marker away and break the context floor.
   pi.on("session_before_compact", () => (loop.isLive() ? { cancel: true } : undefined));
+  pi.on("session_before_tree", (_event, ctx) => {
+    const blocked = loop.treeBlocked();
+    if (!blocked) return undefined;
+    ctx.ui.notify(blocked, "warning");
+    return { cancel: true };
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     latestContext = ctx;

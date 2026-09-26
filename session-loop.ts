@@ -82,6 +82,7 @@ export type Phase =
   | { kind: "deciding"; live: LiveRun; parked: Deferred<Next> | null };
 
 export const CONTINUE_PROMPT = "Continue the iteration.";
+export const TREE_BLOCKED = "An autoloop is live in this session; /loop:stop it before navigating the tree.";
 const EMPTY_USAGE: HostUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
 
 export class SessionLoop implements HostWorker {
@@ -126,6 +127,11 @@ export class SessionLoop implements HostWorker {
     if (live.runId === null) live.pendingGuidance.push(text);
     else this.harness.guide(live.runId, live.cwd, text);
     return true;
+  }
+
+  /** Tree navigation would move the leaf off the live iteration's marker. */
+  treeBlocked(): string | null {
+    return this.phase.kind === "idle" ? null : TREE_BLOCKED;
   }
 
   /** Session shutdown: stop the run without writing to the transcript; restore.ts closes the segment later. */

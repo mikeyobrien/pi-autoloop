@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { asDraft, endMarker, iterationMarker } from "../markers.ts";
-import { CONTINUE_PROMPT, SessionLoop } from "../session-loop.ts";
+import { CONTINUE_PROMPT, SessionLoop, TREE_BLOCKED } from "../session-loop.ts";
 import { assistant, assistantError, beforeSettle, FakeHarness, FakePi, fakeTurn, flush, markerMessage, user } from "./fakes.ts";
 
 const REQUEST = { preset: "autocode", objective: "Add rate limiting", cwd: "/repo" };
@@ -427,6 +427,17 @@ describe("assistant errors", () => {
     loop.onMessageEnd(assistantError(" ", undefined));
     void loop.onBeforeSettle(beforeSettle([marker], "error"));
     expect(await result).toMatchObject({ output: "assistant error" });
+  });
+});
+
+describe("tree navigation", () => {
+  it("is blocked only while a loop is live", async () => {
+    expect(loop.treeBlocked()).toBeNull();
+    loop.start(REQUEST);
+    expect(loop.treeBlocked()).toBe(TREE_BLOCKED);
+    loop.stop();
+    await harness.end({ iterations: 0, stopReason: "interrupted" });
+    expect(loop.treeBlocked()).toBeNull();
   });
 });
 
