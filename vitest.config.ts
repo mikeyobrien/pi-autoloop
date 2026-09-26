@@ -5,7 +5,7 @@ export default defineConfig({
     include: ["test/**/*.test.ts"],
     coverage: {
       provider: "v8",
-      include: ["context-floor.ts", "session-loop.ts", "markers.ts", "emit-tool.ts", "restore.ts"],
+      include: ["context-floor.ts", "session-loop.ts", "markers.ts", "emit-tool.ts", "restore.ts", "harness-adapter.ts"],
       reporter: ["text"],
       thresholds: { lines: 90, branches: 90 },
     },

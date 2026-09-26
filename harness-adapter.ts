@@ -1,8 +1,8 @@
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { resolvePresetSource } from "@mobrienv/autoloop-core/config";
 import { appendOperatorEvent } from "@mobrienv/autoloop-core/journal";
 import { findRunByPrefix } from "@mobrienv/autoloop-core/registry/read";
-import { resume, run } from "@mobrienv/autoloop-harness";
+import { resume, resumeProblem, run } from "@mobrienv/autoloop-harness";
 import { resolveAutoloopBin } from "./autoloop-bin.ts";
 import type { HostWorker } from "./host-types.ts";
 import type { HarnessPort, RunOutcome, StartRequest } from "./session-loop.ts";
@@ -32,10 +32,18 @@ export const harnessAdapter: HarnessPort = {
   async run(request: StartRequest, host: HostWorker, signal: AbortSignal): Promise<RunOutcome> {
     const source = resolvePresetSource(request.preset, "");
     if (!source) throw new Error(`unknown autoloop preset: ${request.preset}`);
-    const options: HostOptions & { workDir: string; presetFile?: string; configOverride: Record<string, unknown>; logLevel: string } = {
+    const options: HostOptions & {
+      workDir: string;
+      presetFile?: string;
+      configOverride: Record<string, unknown>;
+      logLevel: string;
+      noWorktree: boolean;
+    } = {
       host,
       signal,
       workDir: request.cwd,
+      // Pi's tools act on the session cwd; a worktree run would edit files the agent never sees.
+      noWorktree: true,
       configOverride: IN_SESSION_CONFIG,
       logLevel: QUIET,
       ...(source.kind === "file" ? { presetFile: source.file } : {}),
@@ -44,6 +52,15 @@ export const harnessAdapter: HarnessPort = {
   },
 
   async resume(runId: string, cwd: string, host: HostWorker, signal: AbortSignal): Promise<RunOutcome> {
+    const record = findRecord(cwd, runId);
+    const problem = resumeProblem(record);
+    if (problem) throw new Error(problem);
+    if (record.isolation_mode === "worktree") {
+      throw new Error(`${record.run_id} runs in a worktree, which pi's tools cannot reach; resume it with the autoloop CLI`);
+    }
+    if (resolvePath(record.work_dir) !== resolvePath(cwd)) {
+      throw new Error(`${record.run_id} works in ${record.work_dir}; resume it from a pi session there`);
+    }
     const options: HostOptions & { selfCommand: string; baseStateDir: string; configOverride: Record<string, unknown>; logLevel: string } = {
       host,
       signal,
@@ -52,7 +69,7 @@ export const harnessAdapter: HarnessPort = {
       selfCommand: selfCommand(),
       baseStateDir: join(cwd, ".autoloop"),
     };
-    return resume(findRecord(cwd, runId), options);
+    return resume(record, options);
   },
 
   guide(runId: string, cwd: string, text: string): void {
