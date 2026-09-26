@@ -6,6 +6,7 @@ import type {
   ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { AutoloopManager } from "./detached.ts";
+import type { SessionLoop } from "./session-loop.ts";
 import { findRun, readRegistry } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
 import { resolveAutoloopBin } from "./autoloop-bin.ts";
@@ -35,26 +36,32 @@ const AutoloopParams = Type.Object({
       description: "Artifact to inspect (for inspect action)",
     }),
   ),
+  mode: Type.Optional(
+    StringEnum(["session", "detached"] as const, {
+      description:
+        "session (default): run the loop in this pi session with you as the worker. detached: spawn the autoloop CLI in the background",
+    }),
+  ),
   backend: Type.Optional(
-    Type.String({ description: "Override backend command (for run)" }),
+    Type.String({ description: "Override backend command (detached runs only)" }),
   ),
   worktree: Type.Optional(
-    Type.Boolean({ description: "Use git worktree isolation (for run)" }),
+    Type.Boolean({ description: "Use git worktree isolation (detached runs only)" }),
   ),
   verbose: Type.Optional(
-    Type.Boolean({ description: "Enable verbose/debug output (for run)" }),
+    Type.Boolean({ description: "Enable verbose/debug output (detached runs only)" }),
   ),
 });
 
-export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
+export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager, loop: SessionLoop) {
   return {
     name: "autoloop",
     label: "Autoloop",
     description: `Run autonomous LLM loops. Actions:
-- run: Start an autoloop (requires preset, prompt)
+- run: Start an autoloop (requires preset, prompt). Default mode "session" runs it in this conversation: after your reply ends, each iteration arrives as a message with a fresh context; do the work and call autoloop_emit. mode "detached" spawns a background CLI run
 - list: Show active and recent runs
 - status: Get run progress — returns journal/state_dir/work_dir paths you can read with your own file tools (requires runId)
-- stop: Stop a running autoloop (requires runId)
+- stop: Stop the in-session loop (no runId) or a detached run (runId)
 - inspect: Read structured run artifacts (requires runId, artifact). For ad-hoc files (progress.md, fix-log.md, scratchpads), get state_dir from status and read files directly with your read/bash tools.
 - presets: List available presets`,
     promptSnippet: "Run autonomous LLM loops for complex multi-step tasks",
@@ -78,6 +85,7 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
         action: string;
         preset?: string;
         prompt?: string;
+        mode?: "session" | "detached";
         runId?: string;
         artifact?: string;
         backend?: string;
@@ -98,6 +106,18 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
               "run",
               false,
               "Missing required params: preset and prompt",
+            );
+          }
+          if (params.mode !== "detached") {
+            try {
+              loop.start({ preset: params.preset, objective: params.prompt, cwd: ctx.cwd });
+            } catch (error) {
+              return result("run", false, error instanceof Error ? error.message : String(error));
+            }
+            return result(
+              "run",
+              true,
+              `Autoloop ${params.preset} armed in this session. Iteration 1 starts after this reply; end your reply now.`,
             );
           }
           const state = manager.startRun(
@@ -155,8 +175,16 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager) {
           });
         }
         case "stop": {
-          if (!params.runId)
-            return result("stop", false, "Missing required param: runId");
+          const liveRunId = loop.view()?.runId;
+          if (!params.runId || params.runId === liveRunId) {
+            const stopping = loop.stop();
+            return result(
+              "stop",
+              stopping,
+              stopping ? `Stopping in-session autoloop ${liveRunId ?? ""}`.trim() : "No live autoloop in this session",
+              liveRunId ? { runId: liveRunId } : undefined,
+            );
+          }
           const stopped = await manager.stopRun(params.runId);
           return result(
             "stop",
