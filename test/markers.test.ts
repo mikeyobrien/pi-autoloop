@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { END_MARKER, ITERATION_MARKER, readMarker } from "../context-floor.ts";
-import { asDraft, endMarker, iterationMarker, registerMarkerRenderers, renderEnd, renderIteration } from "../markers.ts";
+import { asDraft, endMarker, formatCost, iterationMarker, registerMarkerRenderers, renderEnd, renderIteration } from "../markers.ts";
 import { fakeTurn } from "./fakes.ts";
 
 const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s } as unknown as Theme;
@@ -67,5 +67,11 @@ describe("registerMarkerRenderers", () => {
     const en = endMarker({ runId: "r", stopReason: "stalled", iterations: 1, costUsd: 0 });
     expect(text(renderers.get(ITERATION_MARKER)!(it, { expanded: false, outputPad: 0 }, theme).render(80))).toContain("⟳");
     expect(text(renderers.get(END_MARKER)!(en, { expanded: false, outputPad: 0 }, theme).render(80))).toContain("stalled");
+  });
+
+  it("keeps sub-cent costs visible", () => {
+    expect(formatCost(0.0023)).toBe("$0.0023");
+    expect(formatCost(0)).toBe("$0.00");
+    expect(formatCost(1.5)).toBe("$1.50");
   });
 });

@@ -48,7 +48,7 @@ export function asDraft<T>(message: MarkerMessage<T>): CustomMessageEntryDraft {
 }
 
 export function formatCost(usd: number): string {
-  return `$${usd.toFixed(2)}`;
+  return `$${usd.toFixed(usd > 0 && usd < 0.01 ? 4 : 2)}`;
 }
 
 export function iterationHeadline(d: IterationMarkerDetails): string {
