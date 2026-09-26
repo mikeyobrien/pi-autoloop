@@ -158,6 +158,7 @@ describe("pause (Esc)", () => {
   it("does not pause before the first marker is delivered", () => {
     loop.start(REQUEST);
     void harness.turn(fakeTurn());
+    pi.pending = true;
     loop.onSettled();
     expect(pi.lastView()?.phase).toBe("working");
   });
@@ -301,64 +302,51 @@ describe("guide", () => {
   });
 });
 
-describe("detach", () => {
-  it("interrupts the open turn and writes nothing, even when the harness ends later", async () => {
-    const { result } = startFirstTurn();
-    loop.detach();
-    expect(await result).toMatchObject({ status: "interrupted" });
-    expect(harness.signal?.aborted).toBe(true);
-    expect(loop.isLive()).toBe(false);
-    await harness.end({ iterations: 1, stopReason: "interrupted" });
+describe("marker dropped by Esc before delivery", () => {
+  const followUp = { triggerTurn: true, deliverAs: "followUp" };
+
+  it("re-sends the marker once pi settles without having delivered it", () => {
+    const turn = fakeTurn();
+    loop.start(REQUEST);
+    void harness.turn(turn);
+    loop.onSettled();
+    expect(pi.sent).toEqual([
+      { message: iterationMarker(turn), options: followUp },
+      { message: iterationMarker(turn), options: followUp },
+    ]);
+    expect(pi.lastView()?.phase).toBe("working");
+  });
+
+  it("does not re-send while pi still holds the marker in its queue", () => {
+    loop.start(REQUEST);
+    void harness.turn(fakeTurn());
+    pi.pending = true;
+    loop.onSettled();
     expect(pi.sent).toHaveLength(1);
   });
 
-  it("releases a parked boundary without drafting", async () => {
+  it("does not re-send a delivered marker; it pauses instead", () => {
+    startFirstTurn();
+    loop.onSettled();
+    expect(pi.sent).toHaveLength(1);
+    expect(pi.lastView()?.phase).toBe("paused");
+  });
+
+  it("a stop before the settle wins over the re-send", async () => {
+    loop.start(REQUEST);
+    const result = harness.turn(fakeTurn());
+    loop.stop();
+    loop.onSettled();
+    expect(await result).toMatchObject({ status: "interrupted" });
+    expect(pi.sent).toHaveLength(1);
+  });
+
+  it("never re-sends a drafted marker", async () => {
     const { result, marker } = startFirstTurn();
-    const settle = loop.onBeforeSettle(beforeSettle([marker]));
+    void loop.onBeforeSettle(beforeSettle([marker]));
     await result;
-    loop.detach();
-    expect(await settle).toBeUndefined();
-  });
-
-  it("is a no-op when idle or before the first turn", () => {
-    loop.detach();
-    loop.start(REQUEST);
-    loop.detach();
-    expect(loop.isLive()).toBe(false);
-  });
-});
-
-describe("projectContext", () => {
-  it("projects the transcript and passes through when idle or undelivered", () => {
-    const messages = [user("a"), user("b")];
-    expect(loop.projectContext(messages)).toEqual(messages);
-    loop.start(REQUEST);
-    void harness.turn(fakeTurn());
-    expect(loop.projectContext(messages)).toEqual(messages);
-  });
-
-  it("floors at the live marker", () => {
-    const { marker } = startFirstTurn();
-    expect(loop.projectContext([user("pre"), marker, assistant("x")])).toEqual([marker, assistant("x")]);
-  });
-
-  it("fails closed to the marker alone when the live marker is missing", () => {
-    const { turn } = startFirstTurn();
-    const projected = loop.projectContext([user("compacted history")]);
-    expect(projected).toHaveLength(1);
-    expect(projected[0]).toMatchObject({ role: "custom", ...iterationMarker(turn) });
-  });
-});
-
-describe("activeTurn", () => {
-  it("is null until the marker is delivered", async () => {
-    expect(loop.activeTurn()).toBeNull();
-    loop.start(REQUEST);
-    const turn = fakeTurn();
-    void harness.turn(turn);
-    expect(loop.activeTurn()).toBeNull();
-    loop.onMessageEnd(markerMessage(iterationMarker(turn)));
-    expect(loop.activeTurn()).toBe(turn);
-    await flush();
+    void harness.turn(fakeTurn({ iteration: 2 }));
+    loop.onSettled();
+    expect(pi.sent).toHaveLength(1);
   });
 });

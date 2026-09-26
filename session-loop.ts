@@ -9,6 +9,8 @@ export interface PiPort {
   sendMessage(message: MarkerMessage<unknown>, options?: { triggerTurn: true; deliverAs: "followUp" }): void;
   sendUserMessage(text: string): void;
   abortAgent(): void;
+  /** True while pi still holds queued steering or follow-up messages. */
+  hasPendingMessages(): boolean;
   /** Called after every phase change; drives the dock, status line, and emit tool activation. */
   update(view: LoopView | null): void;
 }
@@ -55,6 +57,8 @@ interface ArmedTurn {
   readonly turn: HostTurn;
   /** The marker reached the model's context; before then, assistant messages belong to pre-loop chat. */
   delivered: boolean;
+  /** The marker went out through sendMessage rather than as a before_settle draft. */
+  sent: boolean;
   usage: HostUsage;
   output: string;
   readonly settle: (result: HostTurnResult) => void;
@@ -167,6 +171,7 @@ export class SessionLoop implements HostWorker {
       const armed: ArmedTurn = {
         turn,
         delivered: phase.parked !== null,
+        sent: phase.parked === null,
         usage: { ...EMPTY_USAGE },
         output: "",
         settle: (result) => {
@@ -228,9 +233,18 @@ export class SessionLoop implements HostWorker {
     return { entries: [...event.entries, asDraft(iterationMarker(next.turn))], continue: true };
   }
 
-  /** Pi settled without our boundary (Esc skips before_settle): the iteration stays open, paused. */
+  /**
+   * Pi settled without our boundary (Esc skips before_settle): the iteration stays open, paused.
+   * An abort also clears pi's queues, dropping a marker still waiting as a follow-up; pi is idle
+   * now, so re-sending it starts the iteration.
+   */
   onSettled(): void {
-    if (this.phase.kind === "working" && this.phase.armed.delivered) this.setPhase({ ...this.phase, kind: "paused" });
+    if (this.phase.kind !== "working") return;
+    const { armed } = this.phase;
+    if (armed.delivered) this.setPhase({ ...this.phase, kind: "paused" });
+    else if (armed.sent && !this.pi.hasPendingMessages()) {
+      this.pi.sendMessage(iterationMarker(armed.turn), { triggerTurn: true, deliverAs: "followUp" });
+    }
   }
 
   /** Fails closed: a live iteration whose marker was projected away sees only its marker. */

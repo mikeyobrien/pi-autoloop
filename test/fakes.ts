@@ -23,6 +23,7 @@ export class FakePi implements PiPort {
   sent: Array<{ message: MarkerMessage<unknown>; options?: object }> = [];
   userMessages: string[] = [];
   aborts = 0;
+  pending = false;
   views: Array<LoopView | null> = [];
 
   sendMessage(message: MarkerMessage<unknown>, options?: object): void {
@@ -33,6 +34,9 @@ export class FakePi implements PiPort {
   }
   abortAgent(): void {
     this.aborts++;
+  }
+  hasPendingMessages(): boolean {
+    return this.pending;
   }
   update(view: LoopView | null): void {
     this.views.push(view);

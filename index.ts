@@ -32,6 +32,7 @@ function register(pi: ExtensionAPI, harness: HarnessPort) {
       sendMessage: (message, options) => pi.sendMessage(message, options),
       sendUserMessage: (text) => pi.sendUserMessage(text),
       abortAgent: () => latestContext?.abort(),
+      hasPendingMessages: () => latestContext?.hasPendingMessages() ?? false,
       update: (view) => {
         setEmitToolActive(view !== null);
         dock?.refresh();
