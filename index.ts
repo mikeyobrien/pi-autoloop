@@ -8,13 +8,20 @@ import { findRun, readRegistry } from "./registry.ts";
 import { allRunCompletions, runningRunCompletions, inspectCompletions } from "./completions.ts";
 import { resolveAutoloopBin } from "./autoloop-bin.ts";
 import { MESSAGE_TYPE_AUTOLOOP_UPDATE, type AutoloopUpdateDetails, formatElapsed } from "./types.ts";
-import { SessionLoop } from "./session-loop.ts";
+import { SessionLoop, type HarnessPort } from "./session-loop.ts";
 import { harnessAdapter } from "./harness-adapter.ts";
 import { registerMarkerRenderers } from "./markers.ts";
 import { createEmitTool, EMIT_TOOL_NAME } from "./emit-tool.ts";
 import { closeOrphanedRuns } from "./restore.ts";
 
-export default function (pi: ExtensionAPI) {
+export default autoloopExtension(harnessAdapter);
+
+/** The harness is injectable so a scripted harness can drive the real wiring end to end. */
+export function autoloopExtension(harness: HarnessPort) {
+  return (pi: ExtensionAPI) => register(pi, harness);
+}
+
+function register(pi: ExtensionAPI, harness: HarnessPort) {
   const manager = new AutoloopManager();
   let unsubscribe: (() => void) | null = null;
   let dock: ReturnType<typeof setupLoopDock> | null = null;
@@ -30,7 +37,7 @@ export default function (pi: ExtensionAPI) {
         dock?.refresh();
       },
     },
-    harnessAdapter,
+    harness,
   );
 
   function setEmitToolActive(active: boolean) {
