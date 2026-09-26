@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it } from "vitest";
 import { autoloopExtension } from "../index.ts";
-import { TREE_BLOCKED } from "../session-loop.ts";
+import { startNotice, TREE_BLOCKED } from "../session-loop.ts";
 import { FakeHarness, fakeTurn } from "./fakes.ts";
 
 type Handler = (...args: any[]) => any;
@@ -43,6 +43,18 @@ beforeEach(() => {
 });
 
 describe("in-session wiring", () => {
+  it("/loop:run starts the loop and discloses that metareview is off", async () => {
+    const ctx = fakeCtx();
+    await wiring.commands.get("loop:run")!("autocode add rate limiting", ctx);
+    expect(harness.started).toEqual([{ kind: "run", request: { preset: "autocode", objective: "add rate limiting", cwd: "/repo" } }]);
+    expect(ctx.notices).toEqual([{ text: startNotice("autocode"), level: "info" }]);
+  });
+
+  it("the autoloop tool's start notice discloses that metareview is off", async () => {
+    const result = await wiring.tools.get("autoloop")!.execute("id", { action: "run", preset: "autocode", prompt: "x" }, undefined, undefined, fakeCtx());
+    expect(result.content[0].text).toContain("Metareview is disabled for in-session runs");
+  });
+
   it("cancels tree navigation while a loop is live", async () => {
     const tree = wiring.handlers.get("session_before_tree")!;
     const ctx = fakeCtx();

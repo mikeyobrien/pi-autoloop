@@ -6,7 +6,7 @@ import type {
   ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { AutoloopManager } from "./detached.ts";
-import type { SessionLoop } from "./session-loop.ts";
+import { startNotice, type SessionLoop } from "./session-loop.ts";
 import { findRun, readRegistry } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
 import { resolveAutoloopBin } from "./autoloop-bin.ts";
@@ -117,7 +117,7 @@ export function createAutoloopTool(pi: ExtensionAPI, manager: AutoloopManager, l
             return result(
               "run",
               true,
-              `Autoloop ${params.preset} armed in this session. Iteration 1 starts after this reply; end your reply now.`,
+              `${startNotice(params.preset)} Iteration 1 starts after this reply; end your reply now.`,
             );
           }
           const state = manager.startRun(

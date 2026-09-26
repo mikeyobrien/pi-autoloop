@@ -8,7 +8,7 @@ import { findRun, readRegistry } from "./registry.ts";
 import { allRunCompletions, runningRunCompletions, inspectCompletions } from "./completions.ts";
 import { resolveAutoloopBin } from "./autoloop-bin.ts";
 import { MESSAGE_TYPE_AUTOLOOP_UPDATE, type AutoloopUpdateDetails, formatElapsed } from "./types.ts";
-import { SessionLoop, type HarnessPort } from "./session-loop.ts";
+import { SessionLoop, startNotice, type HarnessPort } from "./session-loop.ts";
 import { harnessAdapter } from "./harness-adapter.ts";
 import { registerMarkerRenderers } from "./markers.ts";
 import { createEmitTool, EMIT_TOOL_NAME } from "./emit-tool.ts";
@@ -175,6 +175,7 @@ function register(pi: ExtensionAPI, harness: HarnessPort) {
       }
       try {
         loop.start({ preset, objective, cwd: ctx.cwd });
+        ctx.ui.notify(startNotice(preset), "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }

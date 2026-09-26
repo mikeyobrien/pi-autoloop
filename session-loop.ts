@@ -83,6 +83,10 @@ export type Phase =
 
 export const CONTINUE_PROMPT = "Continue the iteration.";
 export const TREE_BLOCKED = "An autoloop is live in this session; /loop:stop it before navigating the tree.";
+
+export function startNotice(preset: string): string {
+  return `Autoloop ${preset} started in this session. Metareview is disabled for in-session runs; use --detached to keep it.`;
+}
 const EMPTY_USAGE: HostUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
 
 export class SessionLoop implements HostWorker {

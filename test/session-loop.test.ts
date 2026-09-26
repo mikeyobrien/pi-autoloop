@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { asDraft, endMarker, iterationMarker } from "../markers.ts";
-import { CONTINUE_PROMPT, SessionLoop, TREE_BLOCKED } from "../session-loop.ts";
+import { CONTINUE_PROMPT, SessionLoop, startNotice, TREE_BLOCKED } from "../session-loop.ts";
 import { assistant, assistantError, beforeSettle, FakeHarness, FakePi, fakeTurn, flush, markerMessage, user } from "./fakes.ts";
 
 const REQUEST = { preset: "autocode", objective: "Add rate limiting", cwd: "/repo" };
@@ -441,3 +441,70 @@ describe("tree navigation", () => {
   });
 });
 
+describe("startNotice", () => {
+  it("discloses that metareview is off", () => {
+    expect(startNotice("autocode")).toMatch(/^Autoloop autocode started.*Metareview is disabled for in-session runs/);
+  });
+});
+
+describe("detach", () => {
+  it("interrupts the open turn and writes nothing, even when the harness ends later", async () => {
+    const { result } = startFirstTurn();
+    loop.detach();
+    expect(await result).toMatchObject({ status: "interrupted" });
+    expect(harness.signal?.aborted).toBe(true);
+    expect(loop.isLive()).toBe(false);
+    await harness.end({ iterations: 1, stopReason: "interrupted" });
+    expect(pi.sent).toHaveLength(1);
+  });
+
+  it("releases a parked boundary without drafting", async () => {
+    const { result, marker } = startFirstTurn();
+    const settle = loop.onBeforeSettle(beforeSettle([marker]));
+    await result;
+    loop.detach();
+    expect(await settle).toBeUndefined();
+  });
+
+  it("is a no-op when idle or before the first turn", () => {
+    loop.detach();
+    loop.start(REQUEST);
+    loop.detach();
+    expect(loop.isLive()).toBe(false);
+  });
+});
+
+describe("projectContext", () => {
+  it("projects the transcript and passes through when idle or undelivered", () => {
+    const messages = [user("a"), user("b")];
+    expect(loop.projectContext(messages)).toEqual(messages);
+    loop.start(REQUEST);
+    void harness.turn(fakeTurn());
+    expect(loop.projectContext(messages)).toEqual(messages);
+  });
+
+  it("floors at the live marker", () => {
+    const { marker } = startFirstTurn();
+    expect(loop.projectContext([user("pre"), marker, assistant("x")])).toEqual([marker, assistant("x")]);
+  });
+
+  it("fails closed to the marker alone when the live marker is missing", () => {
+    const { turn } = startFirstTurn();
+    const projected = loop.projectContext([user("compacted history")]);
+    expect(projected).toHaveLength(1);
+    expect(projected[0]).toMatchObject({ role: "custom", ...iterationMarker(turn) });
+  });
+});
+
+describe("activeTurn", () => {
+  it("is null until the marker is delivered", async () => {
+    expect(loop.activeTurn()).toBeNull();
+    loop.start(REQUEST);
+    const turn = fakeTurn();
+    void harness.turn(turn);
+    expect(loop.activeTurn()).toBeNull();
+    loop.onMessageEnd(markerMessage(iterationMarker(turn)));
+    expect(loop.activeTurn()).toBe(turn);
+    await flush();
+  });
+});
