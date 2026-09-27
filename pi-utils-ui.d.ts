@@ -4,8 +4,8 @@
  * Do NOT add @aliou/pi-utils-ui to package.json.
  */
 declare module "@aliou/pi-utils-ui" {
-  import type { Theme, ToolRenderResultOptions } from "@mariozechner/pi-coding-agent";
-  import type { Component } from "@mariozechner/pi-tui";
+  import type { Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+  import type { Component } from "@earendil-works/pi-tui";
 
   export interface ToolCallHeaderOptionArg {
     label: string;

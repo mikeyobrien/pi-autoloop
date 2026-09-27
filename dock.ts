@@ -1,8 +1,10 @@
-import type { Theme } from "@mariozechner/pi-coding-agent";
-import type { Component } from "@mariozechner/pi-tui";
-import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
-import type { AutoloopManager } from "./manager.ts";
+import type { AutoloopManager } from "./detached.ts";
+import { formatCost } from "./markers.ts";
+import type { LoopView } from "./session-loop.ts";
 import { readRegistry, findRun } from "./registry.ts";
 import { formatElapsed } from "./types.ts";
 
@@ -59,8 +61,23 @@ function padLine(content: string, width: number): string {
   return ` ${truncated}${" ".repeat(Math.max(0, innerWidth - visibleWidth(truncated)))} `;
 }
 
+const PHASE_LABEL: Record<LoopView["phase"], string> = {
+  working: "working",
+  paused: "paused — type to steer, /loop:continue, /loop:stop",
+  deciding: "deciding…",
+};
+
+export function sessionLine(view: LoopView, theme: Theme): string {
+  const dim = (s: string) => theme.fg("dim", s);
+  const iteration = view.iteration > 0 ? ` ${view.iteration}/${view.maxIterations}` : "";
+  const roles = view.roles.length > 0 ? ` ${theme.fg("warning", view.roles.join(","))}` : "";
+  const phase = view.phase === "paused" ? theme.fg("warning", PHASE_LABEL.paused) : dim(PHASE_LABEL[view.phase]);
+  return `⟳ ${theme.fg("accent", view.runId ?? "starting")}${dim(` (${view.preset}|in-session)`)}${dim(iteration)}${roles}${dim(" · ")}${phase}${dim(` · ${formatCost(view.costUsd)}`)}`;
+}
+
 export class LoopDockComponent implements Component {
   private manager: AutoloopManager;
+  private sessionView: () => LoopView | null;
   private theme: Theme;
   private tui: { requestRender(): void };
   private cwd: string;
@@ -68,11 +85,13 @@ export class LoopDockComponent implements Component {
 
   constructor(opts: {
     manager: AutoloopManager;
+    sessionView: () => LoopView | null;
     theme: Theme;
     tui: { requestRender(): void };
     cwd: string;
   }) {
     this.manager = opts.manager;
+    this.sessionView = opts.sessionView;
     this.theme = opts.theme;
     this.tui = opts.tui;
     this.cwd = opts.cwd;
@@ -88,15 +107,21 @@ export class LoopDockComponent implements Component {
 
   invalidate(): void {}
 
+  requestRender(): void {
+    this.tui.requestRender();
+  }
+
   render(width: number): string[] {
     const theme = this.theme;
     const dim = (s: string) => theme.fg("dim", s);
     const accent = (s: string) => theme.fg("accent", s);
 
     const activeRuns = this.manager.getRuns();
-    if (activeRuns.length === 0) return [];
+    const session = this.sessionView();
+    if (activeRuns.length === 0 && !session) return [];
 
     const lines: string[] = [renderPanelRule(width, theme)];
+    if (session) lines.push(padLine(sessionLine(session, theme), width));
 
     for (const run of activeRuns) {
       const id = run.runId || "discovering...";
@@ -157,18 +182,18 @@ export class LoopDockComponent implements Component {
 
 export function setupLoopDock(
   manager: AutoloopManager,
+  sessionView: () => LoopView | null,
   setWidget: (
     key: string,
     content: unknown,
     options?: { placement: string },
   ) => void,
   getCwd: () => string,
-): () => void {
+): { refresh(): void; dispose(): void } {
   let dockComponent: LoopDockComponent | null = null;
 
   function updateDock() {
-    const activeRuns = manager.getRuns();
-    if (activeRuns.length === 0) {
+    if (manager.getRuns().length === 0 && !sessionView()) {
       setWidget(DOCK_WIDGET_ID, undefined);
       if (dockComponent) {
         dockComponent.dispose();
@@ -181,20 +206,25 @@ export function setupLoopDock(
       setWidget(
         DOCK_WIDGET_ID,
         (tui: { requestRender(): void }, theme: Theme) => {
-          dockComponent = new LoopDockComponent({ manager, theme, tui, cwd: getCwd() });
+          dockComponent = new LoopDockComponent({ manager, sessionView, theme, tui, cwd: getCwd() });
           return dockComponent;
         },
         { placement: "aboveEditor" },
       );
+    } else {
+      dockComponent.requestRender();
     }
   }
 
   const unsub = manager.onEvent(() => updateDock());
 
-  return () => {
-    unsub();
-    dockComponent?.dispose();
-    dockComponent = null;
+  return {
+    refresh: updateDock,
+    dispose: () => {
+      unsub();
+      dockComponent?.dispose();
+      dockComponent = null;
+    },
   };
 }
 
